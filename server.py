@@ -336,8 +336,10 @@ class Room:
         self.playing = False
         self.position = 0.0
         self.updated = time.time()
-        self.clients = {}  # client_id -> {"name", "queue"}
+        self.clients = {}  # client_id -> {"name", "queue", "admin"}
         self.chat = []
+        self.admin_key = None   # секрет создателя комнаты
+        self.everyone = True    # могут ли все управлять просмотром
 
     def current_position(self):
         if self.playing:
@@ -351,7 +353,12 @@ class Room:
             "playing": self.playing,
             "position": self.current_position(),
             "users": sorted({c["name"] for c in self.clients.values()}),
+            "everyone": self.everyone,
+            "admin": next((c["name"] for c in self.clients.values() if c["admin"]), None),
         }
+
+    def is_admin(self, key):
+        return bool(key) and key == self.admin_key
 
     def broadcast(self, msg):
         for c in list(self.clients.values()):
@@ -372,9 +379,19 @@ def get_room(rid):
 REACTIONS = {"😂", "😱", "❤️", "👍", "🔥", "😢", "🍿", "👏"}
 
 
+class Forbidden(Exception):
+    pass
+
+
+CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown"}
+
+
 def room_action(room, body):
     t = body.get("type")
     name = str(body.get("name", "Гость"))[:30]
+    admin = room.is_admin(body.get("admin"))
+    if t in CONTROL_ACTIONS and not room.everyone and not admin:
+        raise Forbidden("Сейчас просмотром управляет только администратор комнаты")
     info = None
     if t == "load":
         # данные фильма берём с archive.org сами, а не доверяем клиенту
@@ -398,6 +415,19 @@ def room_action(room, body):
         elif t == "seek":
             room.position = float(body.get("position", 0))
             sys_msg = None
+        elif t == "countdown":
+            # общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
+            room.position = float(body.get("position", room.current_position()))
+            room.playing = False
+            room.broadcast({"type": "countdown", "name": name})
+            sys_msg = f"{name} запустил(а) обратный отсчёт ⏱"
+        elif t == "mode":
+            if not admin:
+                raise Forbidden("Переключать режим может только администратор")
+            room.position = room.current_position()  # время ниже обновится — не теряем позицию
+            room.everyone = bool(body.get("everyone"))
+            sys_msg = ("Администратор разрешил всем управлять просмотром" if room.everyone
+                       else "Администратор оставил управление просмотром только себе")
         elif t == "chat":
             text = str(body.get("text", "")).strip()[:500]
             if not text:
@@ -512,6 +542,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "bad json"}, 400)
             try:
                 room_action(get_room(p.split("/")[3]), body)
+            except Forbidden as e:
+                return self.send_json({"error": str(e), "forbidden": True}, 403)
             except Exception as e:  # noqa: BLE001
                 return self.send_json({"error": str(e)}, 502)
             return self.send_json({"ok": True})
@@ -521,9 +553,13 @@ class Handler(BaseHTTPRequestHandler):
         room = get_room(rid)
         cid = qs.get("client", [secrets.token_hex(4)])[0]
         name = qs.get("name", ["Гость"])[0][:30]
+        key = qs.get("admin", [""])[0][:64]
         q = queue.Queue()
         with room.lock:
-            room.clients[cid] = {"name": name, "queue": q}
+            if key and room.admin_key is None:
+                room.admin_key = key  # первым с секретом приходит создатель комнаты
+            room.clients[cid] = {"name": name, "queue": q, "admin": room.is_admin(key)}
+            q.put({"type": "you", "admin": room.is_admin(key)})
             q.put(room.state())
             for m in room.chat[-30:]:
                 q.put(m)

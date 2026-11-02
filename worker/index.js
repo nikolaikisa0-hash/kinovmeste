@@ -279,16 +279,22 @@ function newRoomId() {
 
 const enc = new TextEncoder();
 
+class Forbidden extends Error {}
+
+const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown"]);
+
 export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.env = env;
-    this.clients = new Map();  // client_id -> { name, writer }
+    this.clients = new Map();  // client_id -> { name, writer, admin }
     this.movie = null;
     this.playing = false;
     this.position = 0;
     this.updated = Date.now();
     this.chat = [];
+    this.adminKey = null;  // секрет создателя комнаты
+    this.everyone = true;  // могут ли все управлять просмотром
     this.timer = null;
     // фильм и чат переживают перезапуск объекта
     ctx.blockConcurrencyWhile(async () => {
@@ -298,7 +304,8 @@ export class Room extends DurableObject {
   }
 
   save() {
-    this.ctx.storage.put("room", { movie: this.movie, position: this.currentPosition(), chat: this.chat });
+    this.ctx.storage.put("room", { movie: this.movie, position: this.currentPosition(), chat: this.chat,
+                                   adminKey: this.adminKey, everyone: this.everyone });
   }
 
   currentPosition() {
@@ -311,7 +318,12 @@ export class Room extends DurableObject {
 
   state() {
     return { type: "state", movie: this.movie, playing: this.playing,
-             position: this.currentPosition(), users: this.users() };
+             position: this.currentPosition(), users: this.users(), everyone: this.everyone,
+             admin: [...this.clients.values()].find(c => c.admin)?.name ?? null };
+  }
+
+  isAdmin(key) {
+    return Boolean(key) && key === this.adminKey;
   }
 
   sendTo(cid, client, msg) {
@@ -337,7 +349,12 @@ export class Room extends DurableObject {
     if (request.method === "POST" && url.pathname.endsWith("/action")) {
       let body;
       try { body = await request.json(); } catch { return json({ error: "bad json" }, 400); }
-      try { await this.action(body); } catch (e) { return json({ error: String(e.message || e) }, 502); }
+      try {
+        await this.action(body);
+      } catch (e) {
+        if (e instanceof Forbidden) return json({ error: e.message, forbidden: true }, 403);
+        return json({ error: String(e.message || e) }, 502);
+      }
       return json({ ok: true });
     }
     return new Response("Not found", { status: 404 });
@@ -346,12 +363,15 @@ export class Room extends DurableObject {
   events(url) {
     const cid = url.searchParams.get("client") || crypto.randomUUID().slice(0, 8);
     const name = (url.searchParams.get("name") || "Гость").slice(0, 30);
+    const key = (url.searchParams.get("admin") || "").slice(0, 64);
+    if (key && this.adminKey === null) { this.adminKey = key; this.save(); }  // первым с секретом приходит создатель
     const { readable, writable } = new TransformStream();
-    const client = { name, writer: writable.getWriter() };
+    const client = { name, writer: writable.getWriter(), admin: this.isAdmin(key) };
     const old = this.clients.get(cid);
     this.clients.set(cid, client);
     if (old) old.writer.close().catch(() => {});
 
+    this.sendTo(cid, client, { type: "you", admin: client.admin });
     this.sendTo(cid, client, this.state());
     for (const m of this.chat.slice(-30)) this.sendTo(cid, client, m);
     this.broadcast({ type: "system", text: `${name} зашёл(а) в комнату` });
@@ -368,6 +388,10 @@ export class Room extends DurableObject {
   async action(body) {
     const t = body.type;
     const name = String(body.name || "Гость").slice(0, 30);
+    const admin = this.isAdmin(body.admin);
+    if (CONTROL_ACTIONS.has(t) && !this.everyone && !admin) {
+      throw new Forbidden("Сейчас просмотром управляет только администратор комнаты");
+    }
     let sysMsg = null;
     if (t === "load") {
       // данные фильма берём с источника сами, а не доверяем клиенту
@@ -388,6 +412,18 @@ export class Room extends DurableObject {
       sysMsg = `${name}: ⏸ пауза`;
     } else if (t === "seek") {
       this.position = Number(body.position) || 0;
+    } else if (t === "countdown") {
+      // общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
+      this.position = Number(body.position ?? this.currentPosition());
+      this.playing = false;
+      this.broadcast({ type: "countdown", name });
+      sysMsg = `${name} запустил(а) обратный отсчёт ⏱`;
+    } else if (t === "mode") {
+      if (!admin) throw new Forbidden("Переключать режим может только администратор");
+      this.position = this.currentPosition();  // время ниже обновится — не теряем позицию
+      this.everyone = Boolean(body.everyone);
+      sysMsg = this.everyone ? "Администратор разрешил всем управлять просмотром"
+                             : "Администратор оставил управление просмотром только себе";
     } else if (t === "chat") {
       const text = String(body.text || "").trim().slice(0, 500);
       if (!text) return;
