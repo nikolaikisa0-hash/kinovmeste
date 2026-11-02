@@ -2,6 +2,8 @@
 // Повторяет server.py: каталог Internet Archive, YouTube, субтитры и комнаты.
 // Комната = Durable Object; синхронизация через Server-Sent Events + POST.
 import { DurableObject } from "cloudflare:workers";
+// страница встроена в Worker как текст — отдельная загрузка статики не нужна
+import INDEX_HTML from "../static/index.html";
 
 const UA = { "User-Agent": "KinoVmeste/1.0 (watch-party; public-domain films)" };
 
@@ -409,7 +411,9 @@ export default {
     } catch (e) {
       return json({ error: String(e.message || e) }, 502);
     }
-    if (p.startsWith("/api/")) return new Response("Not found", { status: 404 });
-    return env.ASSETS.fetch(request);
+    if (p === "/" || p.startsWith("/room/")) {
+      return new Response(INDEX_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+    return new Response("Not found", { status: 404 });
   },
 };

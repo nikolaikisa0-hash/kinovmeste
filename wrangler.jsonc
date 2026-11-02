@@ -4,13 +4,8 @@
   "name": "kinovmeste",
   "main": "worker/index.js",
   "compatibility_date": "2025-09-01",
-  "assets": {
-    "directory": "./static",
-    "binding": "ASSETS",
-    // /room/<id> отдаёт index.html, а /api/* обрабатывает сам Worker
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  },
+  // static/index.html встраивается в Worker как текст (import в worker/index.js)
+  "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": true }],
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },
