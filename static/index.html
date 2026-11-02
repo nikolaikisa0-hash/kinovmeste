@@ -348,9 +348,12 @@ function renderRoom(roomId) {
       v.appendChild(tr);
     });
     if (movie.subs?.length) toast("Есть субтитры — включите их в меню плеера (CC)");
-    let remoteSeek = false, retries = 0;
+    let remoteSeek = false, retries = 0, blockedAt = 0;
     v.addEventListener("play", () => emit("play"));
-    v.addEventListener("pause", () => { if (!v.ended) emit("pause"); });
+    v.addEventListener("pause", () => setTimeout(() => {
+      // паузу, которую поставил сам браузер из-за запрета автозапуска, не рассылаем
+      if (!v.ended && Date.now() - blockedAt > 2000) emit("pause");
+    }, 50));
     v.addEventListener("seeked", () => {
       if (remoteSeek) { remoteSeek = false; return; }  // перемотка от сервера — не пересылаем
       emit("seek");
@@ -364,7 +367,16 @@ function renderRoom(roomId) {
       time: () => v.currentTime,
       paused: () => v.paused,
       seek: t => { remoteSeek = true; v.currentTime = t; },
-      play: () => v.play(),
+      play: async () => {
+        try { await v.play(); }
+        catch (e) {
+          blockedAt = Date.now();
+          if (e.name !== "NotAllowedError" || v.muted) throw e;
+          v.muted = true;  // без звука браузеры разрешают автозапуск
+          await v.play();
+          toast("Видео идёт без звука — включите звук в плеере 🔊");
+        }
+      },
       pause: () => v.pause(),
       rate: r => { v.playbackRate = r; },
       destroy: () => {},

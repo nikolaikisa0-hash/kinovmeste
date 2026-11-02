@@ -45,21 +45,23 @@ python3 server.py
    в поле `YOUTUBE_API_KEY`. Бесплатного лимита хватает примерно на 100 поисков в день
    (повторные запросы берутся из кэша).
 
-## Публикация в интернете (Render, бесплатно)
+## Публикация в интернете (Cloudflare, бесплатно и без карты)
 
-1. Создайте аккаунт на https://github.com и новый репозиторий (например `kinovmeste`).
-2. Загрузите код. Локальный git-репозиторий уже готов:
-   ```bash
-   git remote add origin https://github.com/ВАШ_ЛОГИН/kinovmeste.git
-   git push -u origin main
-   ```
-3. Войдите на https://render.com через GitHub → «New» → «Blueprint» →
-   выберите репозиторий. Render прочитает `render.yaml`, спросит `YOUTUBE_API_KEY`.
-4. Через пару минут сайт будет на адресе вида `https://kinovmeste.onrender.com` —
-   эту ссылку можно отправлять друзьям в любом городе.
+Для Cloudflare есть отдельная версия сервера на JavaScript: `worker/index.js`
+(Worker + Durable Object на каждую комнату), настройки — в `wrangler.jsonc`.
+Страница сайта (`static/index.html`) общая для обеих версий.
 
-На бесплатном плане сервер засыпает без посетителей и просыпается ~30 секунд.
-Комнаты и чат хранятся в памяти и очищаются при перезапуске.
+1. Зарегистрируйтесь на https://dash.cloudflare.com/sign-up (только почта).
+2. **Workers & Pages** → **Create** → **Import a repository** → подключите GitHub
+   и выберите репозиторий `kinovmeste`.
+3. Оставьте настройки по умолчанию (команда деплоя `npx wrangler deploy`) → **Deploy**.
+4. Сайт появится на адресе вида `https://kinovmeste.ВАШ-ПОДДОМЕН.workers.dev`.
+5. Ключ YouTube (по желанию): Worker → **Settings** → **Variables and Secrets** →
+   **Add** → тип **Secret**, имя `YOUTUBE_API_KEY`.
+
+Дальше Cloudflare сам пересобирает сайт после каждого `git push` в `main`.
+
+Локальная проверка Cloudflare-версии: `npx wrangler dev` (нужен Node.js).
 
 ## Временная ссылка без хостинга
 

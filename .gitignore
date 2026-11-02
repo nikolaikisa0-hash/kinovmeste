@@ -6,3 +6,5 @@ __pycache__/
 # личные файлы — не публиковать
 *.docx
 *.pdf
+node_modules/
+.wrangler/

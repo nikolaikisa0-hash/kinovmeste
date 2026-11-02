@@ -1,0 +1,19 @@
+// Cloudflare Workers: бесплатный хостинг без карты.
+// Cloudflare сам собирает и выкладывает сайт из GitHub-репозитория.
+{
+  "name": "kinovmeste",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    // /room/<id> отдаёт index.html, а /api/* обрабатывает сам Worker
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // SQLite-хранилище — единственный вариант Durable Objects на бесплатном плане
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}
