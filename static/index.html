@@ -743,7 +743,7 @@ async function renderRoom(roomId) {
     if (!canControl()) { toast("Сейчас просмотром управляет только администратор 👑"); return revert(); }
     const t = player.time();
     // плеер не знает время или вдруг говорит «0» посреди фильма — не отматываем всех в начало
-    const sane = Number.isFinite(t) && !(t < 1 && type !== "seek" && lastState?.movie && expected() > 5);
+    const sane = Number.isFinite(t) && !(t < 1 && lastState?.movie && expected() > 5);
     send(sane ? { type, position: t } : { type });
   };
 
@@ -1027,7 +1027,10 @@ async function renderRoom(roomId) {
         if ((st === "pause" || st === "paused") && lastState.playing) emit("pause");
         if ((st === "seeking" || st === "seeked") && Date.now() > remoteSeekUntil) {
           clearTimeout(seekTimer);
-          seekTimer = setTimeout(() => emit("seek"), 500);  // ждём, пока придёт новое время
+          seekTimer = setTimeout(() => {  // ждём, пока придёт новое время
+            const cur = now();
+            if (Number.isFinite(cur) && Math.abs(cur - expected()) > 2) emit("seek");
+          }, 500);
         }
       } else if (m?.type === "player:error") {
         toast("Rutube не даёт воспроизвести это видео здесь — выберите другое");
@@ -1063,13 +1066,20 @@ async function renderRoom(roomId) {
       if (dead) return;
       p = VK.VideoPlayer(frame);
       const markReady = () => { if (!ready) { ready = true; if (lastState) applyState({ ...lastState, position: expected() }); } };
-      p.on("inited", markReady);
+      // после паузы VK перезапускает плеер: «inited» со временем 0, затем сам перематывает на место
+      let initedAt = 0;
+      p.on("inited", () => { initedAt = Date.now(); markReady(); });
       p.on("timeupdate", markReady);
       const onPlay = () => { markReady(); if (!applying && lastState && !lastState.playing) emit("play"); };
       p.on("started", onPlay);
       p.on("resumed", onPlay);
       p.on("paused", () => { markReady(); if (!applying && lastState?.playing) emit("pause"); });
-      p.on("seeked", () => { if (!applying && Date.now() > remoteSeekUntil) emit("seek"); });
+      p.on("seeked", () => {
+        if (applying || !lastState || Date.now() < remoteSeekUntil || Date.now() - initedAt < 4000) return;
+        const t = p.getCurrentTime();
+        // VK сам «перематывает» при паузе и перезапуске — рассылаем только настоящую перемотку
+        if (Number.isFinite(t) && Math.abs(t - expected()) > 2) emit("seek");
+      });
       p.on("error", () => toast("VK не даёт воспроизвести это видео здесь: оно закрыто или запрещено к встраиванию"));
     }).catch(() => toast("Не удалось загрузить плеер VK"));
     return {
