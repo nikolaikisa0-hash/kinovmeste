@@ -383,7 +383,7 @@ class Forbidden(Exception):
     pass
 
 
-CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown"}
+CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync"}
 
 
 def room_action(room, body):
@@ -415,6 +415,14 @@ def room_action(room, body):
         elif t == "seek":
             room.position = float(body.get("position", 0))
             sys_msg = None
+        elif t == "syncreq":
+            # зритель просит администратора прислать своё точное время
+            room.broadcast({"type": "syncreq", "name": name})
+            return
+        elif t == "sync":
+            room.position = float(body.get("position", room.current_position()))
+            room.playing = bool(body.get("playing"))
+            sys_msg = f"🔄 Все синхронизированы по {name}"
         elif t == "countdown":
             # общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
             room.position = float(body.get("position", room.current_position()))

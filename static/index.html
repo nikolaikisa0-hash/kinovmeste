@@ -176,7 +176,33 @@
   .room.dark .glow { opacity: .7; }
   body.dark header { opacity: .15; }
   body.dark header:hover { opacity: 1; }
-  .room:fullscreen { height: 100vh; }
+  /* полный экран: видео на весь экран, чат — полупрозрачный оверлей справа */
+  body.noscroll { overflow: hidden; }
+  .room.fs { position: fixed; inset: 0; z-index: 30; display: block; height: 100vh; height: 100dvh; background: #000; }
+  .room.fs .stage { position: absolute; inset: 0; padding: 0; }
+  .room.fs .screen { position: absolute; inset: 0; aspect-ratio: auto; }
+  .room.fs .glow { display: none; }
+  .room.fs .player { border-radius: 0; border: 0; box-shadow: none; }
+  .room.fs .toolbar { position: absolute; top: 14px; left: 14px; right: 394px; padding: 8px 12px; z-index: 5; flex-wrap: nowrap;
+    background: rgba(10,10,18,.55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,.1); border-radius: 18px; transition: opacity .4s, transform .4s, right .4s; }
+  .room.fs .toolbar .reactbar { background: transparent; border: 0; }
+  .room.fs.nochat .toolbar { right: 14px; }
+  .room.fs.idle .toolbar { opacity: 0; transform: translateY(-12px); }
+  .room.fs.idle .toolbar:hover { opacity: 1; transform: none; }
+  .room.fs .side { position: absolute; top: 14px; right: 14px; bottom: 76px; width: min(366px, 82vw); z-index: 6; height: auto;
+    background: rgba(12,12,20,.5); backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    border: 1px solid rgba(255,255,255,.1); border-radius: 20px; box-shadow: var(--shadow); opacity: 1 !important;
+    transition: transform .45s cubic-bezier(.2,.9,.3,1), opacity .35s; overflow: hidden; }
+  .room.fs.nochat .side { transform: translateX(calc(100% + 30px)); opacity: 0 !important; pointer-events: none; }
+  .room.fs .bubble { background: rgba(255,255,255,.1); }
+  .room.fs .chatform input, .room.fs .person, .room.fs .msg.sys span, .room.fs .quick button { background: rgba(255,255,255,.08); }
+  .room:not(.fs) #chatBtn { display: none; }
+  .fsnote { position: absolute; right: 18px; bottom: 84px; z-index: 6; max-width: min(340px, 70vw); display: flex; gap: 8px; align-items: center;
+    padding: 8px 14px 8px 8px; border-radius: 16px; background: rgba(12,12,20,.7); backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.1); opacity: 0; transform: translateY(10px); transition: all .35s; pointer-events: none; }
+  .fsnote.show { opacity: 1; transform: none; }
+  #syncBtn { height: 42px; }
 
   /* боковая панель */
   .side { display: flex; flex-direction: column; min-height: 0; background: var(--bg2); border-left: 1px solid rgba(255,255,255,.06); transition: opacity .5s; }
@@ -255,6 +281,10 @@
 
   .namecard { text-align: center; padding: 34px 26px 26px; }
   .namecard .big { font-size: 52px; animation: bob 2.4s ease-in-out infinite; }
+  .bigava { width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: grid; place-items: center; font: 800 36px/1 "Unbounded", sans-serif;
+    color: #fff; background: var(--grad); box-shadow: 0 14px 40px rgba(255,77,90,.35); transition: background .4s, transform .3s cubic-bezier(.3,1.6,.5,1); }
+  .bigava.typing { transform: scale(1.08); }
+  .namechips { justify-content: center; flex-wrap: wrap; padding: 16px 0 0; overflow: visible; }
   .namecard h2 { font: 800 22px/1.2 "Unbounded", sans-serif; margin: 10px 0 6px; }
   .namecard form { display: flex; gap: 8px; margin-top: 18px; }
 
@@ -280,7 +310,10 @@
     .detail { flex-direction: column; padding: 20px; }
     .detail img, .detail img.wideimg { width: 150px; }
     .reactbar { order: 3; width: 100%; justify-content: space-between; overflow-x: auto; }
-    #fsBtn { display: none; }
+    #syncBtn span { display: none; }
+    .room.fs .toolbar { right: 14px; flex-wrap: wrap; }
+    .room.fs .toolbar .now { display: none; }
+    .room.fs .side { top: auto; height: 46vh; bottom: 70px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -324,11 +357,12 @@
 <div class="modal" id="nameModal">
   <div class="sheet narrow">
     <div class="namecard">
-      <div class="big">🍿</div>
+      <div class="bigava big" id="namePreview">🍿</div>
       <h2>Как вас зовут?</h2>
-      <div class="muted">Имя увидят все в комнате</div>
-      <form id="nameForm"><input class="sinput" id="nameInput" maxlength="30" placeholder="Например, Коля" autocomplete="nickname">
-        <button class="btn">Войти</button></form>
+      <div class="muted" id="nameSub">Имя увидят все в комнате</div>
+      <form id="nameForm"><input class="sinput" id="nameInput" maxlength="30" placeholder="Ваше имя" autocomplete="nickname">
+        <button class="btn">Войти 🍿</button></form>
+      <div class="chips namechips" id="nameChips"></div>
     </div>
   </div>
 </div>
@@ -368,11 +402,26 @@ document.addEventListener("keydown", e => { if (e.key === "Escape")
   document.querySelectorAll(".modal.open:not(#nameModal)").forEach(m => m.classList.remove("open")); });
 
 // имя спрашиваем красивым окошком, а не системным prompt()
-function askName() {
+function askName(sub) {
   const saved = store.get("kv_name");
   if (saved) return Promise.resolve(saved);
+  if (sub) $("#nameSub").textContent = sub;
+  const pv = $("#namePreview"), inp = $("#nameInput");
+  // аватарка оживает, пока человек печатает имя
+  const preview = () => {
+    const v = inp.value.trim(), h = hue(v);
+    pv.classList.toggle("big", !v);
+    pv.textContent = v ? [...v][0].toUpperCase() : "🍿";
+    pv.style.background = v ? `linear-gradient(135deg,hsl(${h} 75% 55%),hsl(${(h + 40) % 360} 75% 45%))` : "";
+    pv.classList.add("typing"); clearTimeout(preview.t); preview.t = setTimeout(() => pv.classList.remove("typing"), 150);
+  };
+  inp.oninput = preview;
+  const ideas = ["🦊 Лис", "🐼 Панда", "🎬 Режиссёр", "🦉 Сова", "🍿 Попкорн", "🐙 Осьминог", "🚀 Ракета", "🐱 Котик", "🎩 Критик", "🦖 Динозавр"]
+    .sort(() => Math.random() - .5).slice(0, 5);
+  $("#nameChips").innerHTML = ideas.map(n => `<span class="chip">${n}</span>`).join("");
+  $("#nameChips").onclick = e => { const c = e.target.closest(".chip"); if (c) { inp.value = c.textContent.split(" ").slice(1).join(" "); preview(); inp.focus(); } };
   openModal("nameModal");
-  setTimeout(() => $("#nameInput").focus(), 100);
+  setTimeout(() => inp.focus(), 100);
   return new Promise(res => {
     $("#nameForm").onsubmit = e => {
       e.preventDefault();
@@ -570,7 +619,7 @@ function renderHome() {
 async function renderRoom(roomId) {
   document.title = "Комната · КиноВместе";
   $("#subtitle").textContent = "Комната " + roomId;
-  let name = await askName();
+  let name = await askName("Вас пригласили посмотреть кино — представьтесь 👋");
   $("#headerActions").innerHTML = `
     <button class="btn ghost" id="copyLink">🔗 <span>Пригласить</span></button>
     <button class="btn ghost icon" id="gearBtn" title="Настройки" aria-label="Настройки"><span class="spin">⚙️</span></button>`;
@@ -590,6 +639,7 @@ async function renderRoom(roomId) {
       <section class="stage">
         <div class="screen">
           <div class="glow"></div>
+          <div class="fsnote" id="fsNote"></div>
           <div class="player" id="player"><div class="empty">
             <div class="big">🎬</div>
             <h2>Фильм ещё не выбран</h2>
@@ -601,9 +651,11 @@ async function renderRoom(roomId) {
             <div class="meta"><span id="nowYear"></span><span id="lockPill"></span></div></div>
           <div class="reactbar" id="reactbar"></div>
           <div class="tools">
+            <button class="btn ghost small" id="syncBtn" title="Синхронизироваться с администратором">🔄 <span>Синхр.</span></button>
             <button class="btn ghost icon" id="cdBtn" title="Старт с отсчётом 3-2-1">⏱</button>
-            <button class="btn ghost icon" id="lightsBtn" title="Свет в зале">💡</button>
-            <button class="btn ghost icon" id="fsBtn" title="Кинозал: полный экран с чатом">⛶</button>
+            <button class="btn ghost icon" id="lightsBtn" title="Свет в зале (L)">💡</button>
+            <button class="btn ghost icon on" id="chatBtn" title="Показать или скрыть чат (C)">💬</button>
+            <button class="btn ghost icon" id="fsBtn" title="Полный экран с чатом (F)">⛶</button>
             <button class="btn ghost icon" onclick="openPicker()" title="Сменить фильм">🎬</button>
           </div>
         </div>
@@ -642,6 +694,7 @@ async function renderRoom(roomId) {
       `${esc(m.text)}<span class="time">${fmtTime(m.ts)}</span></div>`;
     lastAuthor = m.name;
     box.appendChild(el); box.scrollTop = box.scrollHeight;
+    if (!mine && isFs() && roomEl.classList.contains("nochat")) fsNote(m);
     if (!mine) { ping(); if (document.hidden) { unread++; document.title = `(${unread}) Комната · КиноВместе`; } }
   }
   function addSys(text) {
@@ -667,6 +720,7 @@ async function renderRoom(roomId) {
   // ---- права ----
   const canControl = () => amAdmin || !lastState || lastState.everyone !== false;
   const revert = () => { if (lastState && player) applyState({ ...lastState, position: expected() }); };
+  const resync = () => { if (lastState && player) applyState({ ...lastState, position: expected() }, true); };
   const emit = type => {
     if (applying || !player) return;
     if (!canControl()) { toast("Сейчас просмотром управляет только администратор 👑"); return revert(); }
@@ -709,7 +763,8 @@ async function renderRoom(roomId) {
       </div>
       <div class="sgroup"><h4>Горячие клавиши</h4>
         <div class="muted" style="font-size:13px;line-height:2"><span class="kbd">1</span>–<span class="kbd">8</span> реакции ·
-          <span class="kbd">L</span> свет · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
+          <span class="kbd">L</span> свет · <span class="kbd">F</span> полный экран · <span class="kbd">C</span> скрыть чат ·
+          <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
       </div>`;
     $("#everyone").onchange = e => send({ type: "mode", everyone: e.target.checked });
     $("#renameForm").onsubmit = e => { e.preventDefault(); rename($("#renameInput").value); };
@@ -733,11 +788,47 @@ async function renderRoom(roomId) {
     toast(on ? "🌙 Свет в зале погашен" : "💡 Свет включён");
   }
   $("#lightsBtn").onclick = toggleLights;
-  $("#fsBtn").onclick = () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else $("#room").requestFullscreen?.().catch(() => toast("Браузер не разрешил полный экран"));
+  // полный экран: если браузер не умеет Fullscreen API (iPhone), растягиваем комнату на весь экран сами
+  const roomEl = $("#room");
+  const isFs = () => roomEl.classList.contains("fs");
+  function setFs(on) {
+    roomEl.classList.toggle("fs", on);
+    document.body.classList.toggle("noscroll", on);
+    $("#fsBtn").classList.toggle("on", on);
+    if (on) {
+      wake();
+      if (roomEl.requestFullscreen && !document.fullscreenElement) roomEl.requestFullscreen().catch(() => {});
+    } else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+  $("#fsBtn").onclick = () => setFs(!isFs());
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && isFs()) setFs(false); });
+  function toggleChat() {
+    const hidden = roomEl.classList.toggle("nochat");
+    $("#chatBtn").classList.toggle("on", !hidden);
+  }
+  $("#chatBtn").onclick = toggleChat;
+  // панель в полном экране прячется, если мышь не двигается
+  let idleT;
+  function wake() {
+    roomEl.classList.remove("idle"); clearTimeout(idleT);
+    idleT = setTimeout(() => { if (isFs()) roomEl.classList.add("idle"); }, 3000);
+  }
+  roomEl.addEventListener("mousemove", wake);
+  roomEl.addEventListener("touchstart", wake, { passive: true });
+  function fsNote(m) {
+    $("#fsNote").innerHTML = `${avatar(m.name)}<span><b style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</b> ${esc(m.text)}</span>`;
+    $("#fsNote").classList.add("show");
+    clearTimeout(fsNote.t); fsNote.t = setTimeout(() => $("#fsNote").classList.remove("show"), 4000);
+  }
+
+  // 🔄 синхронизация: зритель подтягивается к администратору, администратор — всех к себе
+  $("#syncBtn").onclick = () => {
+    if (!player || !lastState?.movie) return toast("Сначала выберите фильм 🎬");
+    if (amAdmin) { send({ type: "sync", position: player.time(), playing: !player.paused() }); return toast("🔄 Подтягиваем всех к вам"); }
+    resync();
+    if (lastState.admin) { send({ type: "syncreq" }); toast("🔄 Синхронизируемся с администратором…"); }
+    else toast("🔄 Синхронизировано с комнатой");
   };
-  if (!document.fullscreenEnabled) $("#fsBtn").style.display = "none";
 
   function showCountdown() {
     const box = document.createElement("div");
@@ -762,8 +853,10 @@ async function renderRoom(roomId) {
 
   // Плеер для видеофайла (Internet Archive)
   function filePlayer(movie) {
-    $("#player").innerHTML = `<video controls playsinline preload="auto"></video>`;
+    // встроенный полноэкранный режим видео прячем: наш показывает чат поверх фильма
+    $("#player").innerHTML = `<video controls playsinline preload="auto" controlslist="nofullscreen"></video>`;
     const v = $("#player video");
+    v.addEventListener("dblclick", () => setFs(!isFs()));
     v.src = movie.url;
     (movie.subs || []).forEach(s => {
       const tr = document.createElement("track");
@@ -950,7 +1043,7 @@ async function renderRoom(roomId) {
   }
 
   // Применяем состояние сервера, не вызывая ответных событий
-  async function applyState(s) {
+  async function applyState(s, exact = false) {
     users = s.users || [];
     lastState = { ...s, at: Date.now() };
     renderUsers();
@@ -960,7 +1053,7 @@ async function renderRoom(roomId) {
     try {
       const drift = player.time() - s.position;
       // на паузе выравниваем точно, во время просмотра — только заметное отставание
-      if (Math.abs(drift) > (s.playing ? 1.5 : 0.3)) player.seek(s.position);
+      if (Math.abs(drift) > (s.playing && !exact ? 1.5 : 0.3)) player.seek(s.position);
       // небольшое расхождение догоняем скоростью, без рывков
       player.rate(!s.playing || Math.abs(drift) < 0.3 || Math.abs(drift) > 1.5 ? 1 : drift > 0 ? 0.95 : 1.05);
       if (s.playing && player.paused()) {
@@ -994,6 +1087,10 @@ async function renderRoom(roomId) {
       else if (m.type === "system") addSys(m.text);
       else if (m.type === "react") floatReaction(m.emoji, m.name);
       else if (m.type === "countdown") showCountdown();
+      else if (m.type === "syncreq" && amAdmin && player) {
+        // администратор отвечает своим точным временем
+        send({ type: "sync", position: player.time(), playing: !player.paused() });
+      }
     };
     es.onerror = () => {
       es.close();
@@ -1017,8 +1114,11 @@ async function renderRoom(roomId) {
   document.addEventListener("keydown", e => {
     if (e.target.matches("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
     if (document.querySelector(".modal.open")) return;
+    if (e.key === "Escape" && isFs()) return setFs(false);
     if (/^[1-8]$/.test(e.key)) send({ type: "react", emoji: EMOJI[+e.key - 1] });
     else if (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "д") toggleLights();
+    else if (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "а") setFs(!isFs());
+    else if ((e.key.toLowerCase() === "c" || e.key.toLowerCase() === "с") && isFs()) toggleChat();
     else if (e.key === "Enter") { e.preventDefault(); $("#chatin").focus(); }
   });
 

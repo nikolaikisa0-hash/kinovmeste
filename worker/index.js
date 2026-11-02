@@ -281,7 +281,7 @@ const enc = new TextEncoder();
 
 class Forbidden extends Error {}
 
-const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown"]);
+const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync"]);
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -412,6 +412,14 @@ export class Room extends DurableObject {
       sysMsg = `${name}: ⏸ пауза`;
     } else if (t === "seek") {
       this.position = Number(body.position) || 0;
+    } else if (t === "syncreq") {
+      // зритель просит администратора прислать своё точное время
+      this.broadcast({ type: "syncreq", name });
+      return;
+    } else if (t === "sync") {
+      this.position = Number(body.position ?? this.currentPosition());
+      this.playing = Boolean(body.playing);
+      sysMsg = `🔄 Все синхронизированы по ${name}`;
     } else if (t === "countdown") {
       // общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
       this.position = Number(body.position ?? this.currentPosition());
