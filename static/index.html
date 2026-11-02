@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>КиноВместе</title>
+<style>
+  :root {
+    --bg: #0e0f13; --panel: #171920; --panel2: #1f222b; --line: #2a2e39;
+    --text: #e9eaee; --muted: #9096a5; --accent: #ff5a4e; --accent2: #ff8a4e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; }
+  button, input, select { font: inherit; color: inherit; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; background: rgba(14,15,19,.92);
+    backdrop-filter: blur(8px); z-index: 5; flex-wrap: wrap; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -.3px; text-decoration: none; }
+  .logo span { color: var(--accent); }
+  .grow { flex: 1; }
+  .btn { background: var(--accent); border: 0; border-radius: 10px; padding: 9px 16px;
+    font-weight: 600; cursor: pointer; color: #fff; white-space: nowrap; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+  .muted { color: var(--muted); }
+
+  /* Каталог */
+  .controls { display: flex; gap: 10px; padding: 18px 24px 6px; flex-wrap: wrap; }
+  .controls input { flex: 1; min-width: 200px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; }
+  .controls select { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .chips { display: flex; gap: 8px; padding: 8px 24px; flex-wrap: wrap; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px; cursor: pointer; font-size: 14px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .info { padding: 4px 24px 0; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 18px; padding: 16px 24px 30px; }
+  .card { background: var(--panel); border-radius: 12px; overflow: hidden; cursor: pointer;
+    border: 1px solid var(--line); transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .card .poster { aspect-ratio: 2/3; background: var(--panel2) center/cover no-repeat; }
+  .card .t { padding: 8px 10px 2px; font-weight: 600; font-size: 14px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .y { padding: 0 10px 10px; font-size: 12px; color: var(--muted); }
+  .card.wide .poster { aspect-ratio: 16/9; }
+  .detail img.wideimg { width: 320px; }
+  .tabs { padding-top: 16px; }
+  .linkrow { padding-top: 0; }
+  #player #yt, #player iframe { width: 100%; height: 100%; min-height: 360px; }
+  .more { display: block; margin: 0 auto 40px; }
+
+  /* Комната */
+  .room { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 62px); }
+  .stage { display: flex; flex-direction: column; min-width: 0; }
+  .player { background: #000; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 240px; }
+  .player video { width: 100%; height: 100%; max-height: calc(100vh - 160px); background: #000; }
+  .empty { text-align: center; padding: 30px; }
+  .nowbar { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .nowbar .title { font-weight: 700; }
+  .side { border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); min-height: 0; }
+  .side h3 { margin: 0; padding: 14px 16px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .users { padding: 0 16px 10px; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); }
+  .users span { background: var(--panel2); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+  .msgs { flex: 1; overflow-y: auto; padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  .msg b { color: var(--accent2); }
+  .msg.sys { color: var(--muted); font-size: 13px; font-style: italic; }
+  .chatform { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+  .chatform input { flex: 1; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+
+  /* Модалка */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none;
+    align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+  .modal.open { display: flex; }
+  .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    width: min(1100px, 100%); max-height: 90vh; overflow-y: auto; }
+  .sheet .head { display: flex; align-items: center; padding: 14px 20px 0; }
+  .detail { display: flex; gap: 20px; padding: 20px; }
+  .detail img { width: 200px; border-radius: 10px; align-self: flex-start; }
+  .detail h2 { margin: 0 0 6px; }
+  .detail p { color: var(--muted); }
+  .player { position: relative; overflow: hidden; }
+  .reactbar { display: flex; gap: 4px; }
+  .reactbar button { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 4px 7px; cursor: pointer; font-size: 18px; line-height: 1; }
+  .reactbar button:hover { transform: scale(1.15); }
+  .floater { position: absolute; bottom: 60px; font-size: 38px; pointer-events: none;
+    animation: floatUp 2.6s ease-out forwards; text-shadow: 0 2px 8px rgba(0,0,0,.6); z-index: 3; }
+  .floater small { display: block; font-size: 11px; text-align: center; color: #fff; }
+  @keyframes floatUp { from { transform: translateY(0); opacity: 1; }
+    to { transform: translateY(-260px); opacity: 0; } }
+  .namebtn { cursor: pointer; text-decoration: underline dotted; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+    border: 1px solid var(--line); padding: 10px 18px; border-radius: 10px; opacity: 0; transition: opacity .2s; z-index: 30; }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 860px) {
+    header { padding: 12px 16px; }
+    .controls, .chips, .info, .grid { padding-left: 16px; padding-right: 16px; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
+    .room { grid-template-columns: 1fr; height: auto; }
+    .side { border-left: 0; border-top: 1px solid var(--line); height: 60vh; }
+    .detail { flex-direction: column; }
+    .detail img { width: 140px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">Кино<span>Вместе</span></a>
+  <span class="muted" id="subtitle">Смотрите фильмы вместе с друзьями — бесплатно и легально</span>
+  <span class="grow"></span>
+  <span id="headerActions"></span>
+</header>
+
+<main id="app"></main>
+
+<!-- Каталог внутри комнаты (выбор фильма) -->
+<div class="modal" id="pickerModal">
+  <div class="sheet">
+    <div class="head"><b>Выберите фильм</b><span class="grow"></span>
+      <button class="btn ghost" onclick="closeModal('pickerModal')">✕</button></div>
+    <div id="pickerBody"></div>
+  </div>
+</div>
+
+<!-- Карточка фильма -->
+<div class="modal" id="detailModal">
+  <div class="sheet" style="width:min(760px,100%)">
+    <div class="head"><span class="grow"></span>
+      <button class="btn ghost" onclick="closeModal('detailModal')">✕</button></div>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const poster = m => m.thumb || (m.id.startsWith("yt:") ? `https://i.ytimg.com/vi/${m.id.slice(3)}/hqdefault.jpg`
+  : `https://archive.org/services/img/${encodeURIComponent(m.id)}`);
+
+const GENRES = [["", "Все"], ["soviet","🇷🇺 Советское кино"], ["cartoons","Мультфильмы"], ["horror","Ужасы"], ["comedy","Комедии"], ["scifi","Фантастика"],
+  ["noir","Нуар"], ["crime","Детективы"], ["western","Вестерны"], ["drama","Драмы"],
+  ["war","Военные"], ["silent","Немое кино"]];
+
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200); }
+function openModal(id) { $("#"+id).classList.add("open"); }
+function closeModal(id) { $("#"+id).classList.remove("open"); }
+document.querySelectorAll(".modal").forEach(m => m.addEventListener("click", e => { if (e.target === m) m.classList.remove("open"); }));
+
+function myName() {
+  let n = localStorage.getItem("kv_name");
+  if (!n) { n = (prompt("Как вас зовут?") || "").trim() || "Гость" + Math.floor(Math.random()*1000);
+    try { localStorage.setItem("kv_name", n); } catch {} }
+  return n;
+}
+const CLIENT = Math.random().toString(36).slice(2, 10);
+
+async function newRoom(movieId) {
+  const r = await fetch("/api/new-room").then(r => r.json());
+  location.href = "/room/" + r.id + (movieId ? "?movie=" + encodeURIComponent(movieId) : "");
+}
+
+/* ---------- Каталог (переиспользуется на главной и в комнате) ---------- */
+function Catalog(container, onPick) {
+  const st = { src: "archive", q: "", genre: "", sort: "popular", page: 1, token: null, total: 0 };
+  container.innerHTML = `
+    <div class="chips tabs">
+      <span class="chip on" data-src="archive">🎞 Классика · Internet Archive</span>
+      <span class="chip" data-src="youtube">▶ Новые фильмы · YouTube</span>
+    </div>
+    <div class="controls">
+      <input type="search" class="q">
+      <select class="sort">
+        <option value="popular">Популярные</option>
+        <option value="old">Сначала старые</option>
+        <option value="year">Сначала новые</option>
+        <option value="new">Недавно добавленные</option>
+      </select>
+    </div>
+    <div class="controls linkrow">
+      <input class="link" placeholder="…или вставьте ссылку на фильм на YouTube">
+      <button class="btn ghost linkbtn">Открыть</button>
+    </div>
+    <div class="chips genres">${GENRES.map(([k,v]) => `<span class="chip${k===""?" on":""}" data-g="${k}">${v}</span>`).join("")}</div>
+    <div class="info muted"></div>
+    <div class="grid"></div>
+    <button class="btn ghost more" style="display:none">Показать ещё</button>`;
+  const $c = s => container.querySelector(s);
+  const grid = $c(".grid"), info = $c(".info"), more = $c(".more");
+
+  function setSource(src) {
+    st.src = src;
+    container.querySelectorAll(".tabs .chip").forEach(x => x.classList.toggle("on", x.dataset.src === src));
+    const yt = src === "youtube";
+    $c(".genres").style.display = $c(".sort").style.display = yt ? "none" : "";
+    $c(".q").placeholder = yt ? "Поиск фильма на YouTube: Брат, Интерстеллар, комедия 2024…"
+                              : "Поиск: Дракула, Chaplin, Hitchcock, нуар…";
+    load(true);
+  }
+  container.querySelectorAll(".tabs .chip").forEach(c => c.onclick = () => setSource(c.dataset.src));
+
+  let tmr;
+  $c(".q").addEventListener("input", e => {
+    clearTimeout(tmr); tmr = setTimeout(() => { st.q = e.target.value.trim(); load(true); }, 500); });
+  $c(".sort").addEventListener("change", e => { st.sort = e.target.value; load(true); });
+  container.querySelectorAll(".genres .chip").forEach(c => c.addEventListener("click", () => {
+    container.querySelectorAll(".genres .chip").forEach(x => x.classList.remove("on"));
+    c.classList.add("on"); st.genre = c.dataset.g; load(true); }));
+  more.addEventListener("click", () => { st.page++; load(false); });
+
+  async function openLink() {
+    const url = $c(".link").value.trim();
+    if (!url) return;
+    const r = await fetch("/api/link?" + new URLSearchParams({ url })).then(r => r.json());
+    if (r.error) return toast(r.error);
+    onPick(r);
+  }
+  $c(".linkbtn").onclick = openLink;
+  $c(".link").addEventListener("keydown", e => { if (e.key === "Enter") openLink(); });
+
+  async function load(reset) {
+    if (reset) { st.page = 1; st.token = null; grid.innerHTML = ""; }
+    info.textContent = "Загрузка…"; more.style.display = "none";
+    const src = st.src;
+    try {
+      let r;
+      if (src === "youtube") {
+        r = await fetch("/api/yt/search?" + new URLSearchParams({ q: st.q, page: st.token || "" })).then(r => r.json());
+        if (r.error === "nokey") {
+          info.innerHTML = "Поиск по YouTube ещё не настроен владельцем сайта (нужен YOUTUBE_API_KEY). " +
+            "Пока можно вставить ссылку на фильм с YouTube в поле выше.";
+          return;
+        }
+      } else {
+        r = await fetch("/api/search?" + new URLSearchParams(
+          { q: st.q, genre: st.genre, sort: st.sort, page: st.page })).then(r => r.json());
+      }
+      if (src !== st.src) return;  // пока грузили, переключили вкладку
+      if (r.error) throw new Error(r.error);
+      st.total = r.total; st.token = r.next || null;
+      info.textContent = src === "youtube" ? "Фильмы на YouTube (доступные для встраивания, от 20 минут)"
+                                           : `Найдено фильмов: ${r.total.toLocaleString("ru")}`;
+      if (!r.items.length && reset) info.textContent = "Ничего не найдено — попробуйте другое название" +
+        (src === "archive" ? " или поищите на вкладке YouTube" : "");
+      for (const m of r.items) {
+        const el = document.createElement("div");
+        el.className = "card" + (m.thumb ? " wide" : "");
+        el.innerHTML = `<div class="poster" style="background-image:url('${poster(m)}')"></div>
+          <div class="t">${esc(m.title)}</div><div class="y">${esc([m.year, m.channel].filter(Boolean).join(" · "))}</div>`;
+        el.onclick = () => onPick(m);
+        grid.appendChild(el);
+      }
+      more.style.display = (src === "youtube" ? st.token : grid.children.length < st.total) ? "block" : "none";
+    } catch (e) { info.textContent = "Не удалось загрузить каталог: " + e.message; }
+  }
+  setSource("archive");
+}
+
+function showDetail(m, actions) {
+  $("#detailBody").innerHTML = `<div class="detail">
+      <img src="${poster(m)}" alt="" class="${m.thumb || m.ytId ? "wideimg" : ""}">
+      <div><h2>${esc(m.title)}</h2><div class="muted">${esc([m.year, m.channel].filter(Boolean).join(" · "))}</div>
+        <p>${esc(m.description || "Описание отсутствует.")}</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap" id="detailActions"></div></div></div>`;
+  for (const [label, fn, ghost] of actions) {
+    const b = document.createElement("button");
+    b.className = "btn" + (ghost ? " ghost" : ""); b.textContent = label; b.onclick = fn;
+    $("#detailActions").appendChild(b);
+  }
+  openModal("detailModal");
+}
+
+/* ---------- Главная ---------- */
+function renderHome() {
+  $("#headerActions").innerHTML = `<button class="btn" onclick="newRoom()">＋ Создать комнату</button>`;
+  $("#app").innerHTML = `<div id="cat"></div>`;
+  Catalog($("#cat"), m => showDetail(m, [
+    ["▶ Смотреть вместе", () => newRoom(m.id)],
+    m.id.startsWith("yt:")
+      ? ["Открыть на YouTube", () => window.open("https://www.youtube.com/watch?v=" + m.id.slice(3)), true]
+      : ["Открыть на archive.org", () => window.open("https://archive.org/details/" + m.id), true],
+  ]));
+}
+
+/* ---------- Комната ---------- */
+function renderRoom(roomId) {
+  let name = myName();
+  $("#subtitle").textContent = "Комната " + roomId;
+  $("#headerActions").innerHTML = `<button class="btn ghost" id="copyLink">🔗 Пригласить</button>`;
+  $("#copyLink").onclick = () => {
+    const url = location.origin + "/room/" + roomId;
+    navigator.clipboard?.writeText(url).then(() => toast("Ссылка скопирована"), () => prompt("Ссылка:", url));
+  };
+  $("#app").innerHTML = `
+    <div class="room">
+      <section class="stage">
+        <div class="player" id="player"><div class="empty">
+          <h2>Фильм ещё не выбран</h2>
+          <p class="muted">Выберите фильм — он запустится у всех в комнате.</p>
+          <button class="btn" onclick="openPicker()">Выбрать фильм</button></div></div>
+        <div class="nowbar">
+          <span class="title" id="nowTitle">—</span><span class="muted" id="nowYear"></span>
+          <span class="grow"></span>
+          <div class="reactbar" id="reactbar"></div>
+          <button class="btn ghost" onclick="openPicker()">🎬 Сменить фильм</button>
+        </div>
+      </section>
+      <aside class="side">
+        <h3>В комнате · вы <span class="namebtn" id="myname" title="Сменить имя"></span></h3>
+        <div class="users" id="users"></div>
+        <h3>Чат</h3><div class="msgs" id="msgs"></div>
+        <form class="chatform" id="chatform"><input id="chatin" placeholder="Сообщение…" autocomplete="off" maxlength="500">
+          <button class="btn">➤</button></form>
+      </aside>
+    </div>`;
+
+  const send = body => fetch(`/api/room/${roomId}/action`, { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, name, client: CLIENT }) });
+
+  let player = null, currentKey = null, applying = false, lastState = null;
+
+  function addMsg(html, cls) {
+    const box = $("#msgs"), el = document.createElement("div");
+    el.className = "msg " + (cls || ""); el.innerHTML = html; box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  const emit = type => { if (!applying && player) send({ type, position: player.time() }); };
+  // где фильм должен быть сейчас по данным сервера
+  const expected = () => lastState.position + (lastState.playing ? (Date.now() - lastState.at) / 1000 : 0);
+
+  // Плеер для видеофайла (Internet Archive)
+  function filePlayer(movie) {
+    $("#player").innerHTML = `<video controls playsinline preload="auto"></video>`;
+    const v = $("#player video");
+    v.src = movie.url;
+    (movie.subs || []).forEach(s => {
+      const tr = document.createElement("track");
+      tr.kind = "subtitles"; tr.label = s.label; tr.src = s.url;
+      tr.srclang = s.label.startsWith("Рус") ? "ru" : "en";
+      v.appendChild(tr);
+    });
+    if (movie.subs?.length) toast("Есть субтитры — включите их в меню плеера (CC)");
+    let remoteSeek = false, retries = 0;
+    v.addEventListener("play", () => emit("play"));
+    v.addEventListener("pause", () => { if (!v.ended) emit("pause"); });
+    v.addEventListener("seeked", () => {
+      if (remoteSeek) { remoteSeek = false; return; }  // перемотка от сервера — не пересылаем
+      emit("seek");
+    });
+    v.addEventListener("error", () => {
+      if (retries++ >= 5) return toast("Не удаётся загрузить видео с archive.org");
+      toast("Сбой загрузки, пробуем снова…");
+      setTimeout(() => { v.src = movie.url; if (lastState) applyState({ ...lastState, position: expected() }); }, 2000 * retries);
+    });
+    return {
+      time: () => v.currentTime,
+      paused: () => v.paused,
+      seek: t => { remoteSeek = true; v.currentTime = t; },
+      play: () => v.play(),
+      pause: () => v.pause(),
+      rate: r => { v.playbackRate = r; },
+      destroy: () => {},
+    };
+  }
+
+  // Плеер YouTube через IFrame API
+  let ytApi;
+  const loadYT = () => ytApi ||= new Promise(res => {
+    window.onYouTubeIframeAPIReady = res;
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  });
+
+  function youtubePlayer(movie) {
+    $("#player").innerHTML = `<div id="yt"></div>`;
+    let yt = null, ready = false, lastT = 0, remoteSeekUntil = 0, poll;
+    loadYT().then(() => {
+      yt = new YT.Player("yt", {
+        videoId: movie.ytId,
+        playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+        events: {
+          onReady: () => { ready = true; if (lastState) applyState({ ...lastState, position: expected() }); },
+          onStateChange: e => {
+            if (applying || !lastState) return;
+            // сообщаем только о том, что расходится с состоянием комнаты
+            if (e.data === YT.PlayerState.PLAYING && !lastState.playing) emit("play");
+            if (e.data === YT.PlayerState.PAUSED && lastState.playing) emit("pause");
+          },
+          onError: () => toast("YouTube не даёт воспроизвести это видео здесь — выберите другое"),
+        },
+      });
+      // у YouTube нет события перемотки: замечаем скачок времени сами
+      poll = setInterval(() => {
+        if (!ready) return;
+        const t = yt.getCurrentTime(), playing = yt.getPlayerState() === YT.PlayerState.PLAYING;
+        const jump = t - lastT - (playing ? 1 : 0);
+        lastT = t;
+        if (Math.abs(jump) > 2.5 && Date.now() > remoteSeekUntil && !applying) emit("seek");
+      }, 1000);
+    });
+    return {
+      time: () => ready ? yt.getCurrentTime() : 0,
+      paused: () => !ready || ![YT.PlayerState.PLAYING, YT.PlayerState.BUFFERING].includes(yt.getPlayerState()),
+      seek: t => { if (!ready) return; remoteSeekUntil = Date.now() + 2500; lastT = t; yt.seekTo(t, true); },
+      play: () => { if (ready) yt.playVideo(); return Promise.resolve(); },
+      pause: () => { if (ready) yt.pauseVideo(); },
+      rate: () => {},  // YouTube поддерживает только шаги 0.25 — подстраиваемся перемоткой
+      destroy: () => { clearInterval(poll); yt?.destroy?.(); },
+    };
+  }
+
+  function ensurePlayer(movie) {
+    $("#nowTitle").textContent = movie.title; $("#nowYear").textContent = movie.year || "";
+    const key = movie.source === "youtube" ? "yt:" + movie.ytId : movie.url;
+    if (key === currentKey) return;
+    currentKey = key;
+    player?.destroy();
+    player = movie.source === "youtube" ? youtubePlayer(movie) : filePlayer(movie);
+  }
+
+  // Применяем состояние сервера, не вызывая ответных событий
+  async function applyState(s) {
+    $("#users").innerHTML = (s.users || []).map(u => `<span>${esc(u)}</span>`).join("");
+    if (!s.movie) return;
+    lastState = { ...s, at: Date.now() };
+    ensurePlayer(s.movie);
+    applying = true;
+    try {
+      const drift = player.time() - s.position;
+      // на паузе выравниваем точно, во время просмотра — только заметное отставание
+      if (Math.abs(drift) > (s.playing ? 1.5 : 0.3)) player.seek(s.position);
+      // небольшое расхождение догоняем скоростью, без рывков
+      player.rate(!s.playing || Math.abs(drift) < 0.3 || Math.abs(drift) > 1.5 ? 1 : drift > 0 ? 0.95 : 1.05);
+      if (s.playing && player.paused()) {
+        await player.play().catch(() => toast("Нажмите ▶, чтобы присоединиться к просмотру"));
+      } else if (!s.playing && !player.paused()) player.pause();
+    } finally { setTimeout(() => applying = false, 300); }
+  }
+
+  function floatReaction(emoji, who) {
+    const el = document.createElement("div");
+    el.className = "floater";
+    el.style.left = (10 + Math.random() * 75) + "%";
+    el.innerHTML = `${esc(emoji)}<small>${esc(who)}</small>`;
+    $("#player").appendChild(el);
+    setTimeout(() => el.remove(), 2700);
+  }
+
+  // Подключение к комнате; при обрыве переподключаемся с актуальным именем
+  let es;
+  function connect() {
+    es = new EventSource(`/api/room/${roomId}/events?` + new URLSearchParams({ client: CLIENT, name }));
+    es.onmessage = e => {
+      const m = JSON.parse(e.data);
+      if (m.type === "state") applyState(m);
+      else if (m.type === "users") $("#users").innerHTML = m.users.map(u => `<span>${esc(u)}</span>`).join("");
+      else if (m.type === "chat") addMsg(`<b>${esc(m.name)}:</b> ${esc(m.text)}`);
+      else if (m.type === "system") addMsg(esc(m.text), "sys");
+      else if (m.type === "react") floatReaction(m.emoji, m.name);
+    };
+    es.onerror = () => {
+      es.close();
+      addMsg("Соединение потеряно, переподключаемся…", "sys");
+      setTimeout(connect, 2000);
+    };
+  }
+  connect();
+
+  $("#reactbar").innerHTML = ["😂","😱","❤️","👍","🔥","😢","🍿","👏"]
+    .map(e => `<button title="Реакция">${e}</button>`).join("");
+  $("#reactbar").onclick = e => {
+    if (e.target.tagName === "BUTTON") send({ type: "react", emoji: e.target.textContent });
+  };
+
+  $("#myname").textContent = name;
+  $("#myname").onclick = () => {
+    const n = (prompt("Новое имя:", name) || "").trim().slice(0, 30);
+    if (!n || n === name) return;
+    send({ type: "rename", new: n });
+    name = n; $("#myname").textContent = n;
+    try { localStorage.setItem("kv_name", n); } catch {}
+  };
+
+  $("#chatform").onsubmit = e => {
+    e.preventDefault(); const t = $("#chatin").value.trim();
+    if (t) { send({ type: "chat", text: t }); $("#chatin").value = ""; }
+  };
+
+  async function loadMovie(id) {
+    toast("Загружаем фильм…");
+    const info = await fetch("/api/movie/" + encodeURIComponent(id)).then(r => r.json());
+    if (info.error) return toast(info.error);
+    const r = await send({ type: "load", id }).then(r => r.json());
+    if (r.error) return toast("Не удалось включить фильм: " + r.error);
+    closeModal("pickerModal"); closeModal("detailModal");
+  }
+
+  let pickerReady = false;
+  window.openPicker = () => {
+    if (!pickerReady) {
+      Catalog($("#pickerBody"), m => showDetail(m, [["▶ Включить для всех", () => loadMovie(m.id)]]));
+      pickerReady = true;
+    }
+    openModal("pickerModal");
+  };
+
+  const pre = new URLSearchParams(location.search).get("movie");
+  if (pre) { history.replaceState(null, "", "/room/" + roomId); setTimeout(() => loadMovie(pre), 500); }
+}
+
+const m = location.pathname.match(/^\/room\/([\w-]+)/);
+m ? renderRoom(m[1]) : renderHome();
+</script>
+</body>
+</html>
