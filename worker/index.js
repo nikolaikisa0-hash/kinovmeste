@@ -234,6 +234,8 @@ async function movieInfo(ident) {
   let best = null;
   for (const f of files) if (score(f) >= 0 && (!best || score(f) > score(best))) best = f;
   if (!best) return null;
+  // лёгкая версия для медленного интернета (если она есть и это не тот же файл)
+  const lite = files.find(f => /512kb.*\.mp4$/i.test(f.name || "") && f.name !== best.name);
   const subs = files.filter(f => /\.(srt|vtt)$/i.test(f.name || "")).map(f => ({
     label: subtitleLabel(f.name),
     url: `/api/subs/${encodeURIComponent(ident)}/${encodeURIComponent(f.name)}`,
@@ -244,6 +246,7 @@ async function movieInfo(ident) {
     year: meta.year || String(meta.date || "").slice(0, 4),
     description: stripHtml(joined(meta.description)).slice(0, 1200),
     url: `https://archive.org/download/${encodeURIComponent(ident)}/${encodeURIComponent(best.name)}`,
+    lite: lite ? `https://archive.org/download/${encodeURIComponent(ident)}/${encodeURIComponent(lite.name)}` : null,
     subs,
   };
 }
@@ -284,7 +287,7 @@ const enc = new TextEncoder();
 
 class Forbidden extends Error {}
 
-const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break"]);
+const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck"]);
 const MOVIE_ID = /^[\w.:-]{1,160}$/;
 const LEAVE_GRACE = 20_000;   // столько ждём переподключения, прежде чем написать «вышел»
 const PING_TIMEOUT = 150_000; // клиент шлёт ping раз в 25 с; дольше тишины — соединение мёртвое
@@ -642,7 +645,7 @@ export class Room extends DurableObject {
       // данные фильма берём с источника сами, а не доверяем клиенту
       const info = await movieInfo(String(body.id || ""));
       if (!info) throw new Error("у этого фильма нет видеофайла");
-      this.movie = Object.fromEntries(["id", "title", "year", "url", "subs", "source", "ytId", "embed"]
+      this.movie = Object.fromEntries(["id", "title", "year", "url", "lite", "subs", "source", "ytId", "embed"]
         .map(k => [k, info[k] ?? null]));
       this.playing = false;
       this.position = 0;
@@ -687,6 +690,10 @@ export class Room extends DurableObject {
       sysMsg = `☕ ${name} объявил(а) перерыв на ${min} мин`;
     } else if (t === "typing") {
       this.broadcast({ type: "typing", name, client: body.client });
+      return;
+    } else if (t === "readycheck" || t === "ready") {
+      // «Все готовы?»: сервер только передаёт сигнал, запуск делает тот, кто спросил
+      this.broadcast({ type: t, name, client: body.client });
       return;
     } else if (t === "lag") {
       // клиент сообщает, только когда начал или перестал отставать — это редкое событие

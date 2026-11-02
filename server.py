@@ -275,6 +275,9 @@ def movie_info(ident):
     best = max(files, key=score, default=None)
     if not best or score(best) < 0:
         return None
+    # лёгкая версия для медленного интернета (если она есть и это не тот же файл)
+    lite = next((f for f in files if re.search(r"512kb.*\.mp4$", f.get("name", ""), re.I)
+                 and f.get("name") != best["name"]), None)
     title = meta.get("title", ident)
     if isinstance(title, list):
         title = title[0]
@@ -294,6 +297,8 @@ def movie_info(ident):
         "description": strip_html(desc)[:1200],
         "url": "https://archive.org/download/%s/%s" % (
             urllib.parse.quote(ident), urllib.parse.quote(best["name"])),
+        "lite": lite and "https://archive.org/download/%s/%s" % (
+            urllib.parse.quote(ident), urllib.parse.quote(lite["name"])),
         "subs": subs,
     }
 
@@ -568,7 +573,7 @@ class Forbidden(Exception):
     pass
 
 
-CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break"}
+CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck"}
 MOVIE_ID = re.compile(r"^[\w.:-]{1,160}$")
 
 
@@ -586,7 +591,7 @@ def room_action(room, body):
             raise ValueError("у этого фильма нет видеофайла")
     with room.lock:
         if t == "load":
-            room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "subs", "source", "ytId", "embed")}
+            room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "lite", "subs", "source", "ytId", "embed")}
             room.playing = False
             room.position = 0.0
             room.break_until = None
@@ -637,6 +642,10 @@ def room_action(room, body):
             sys_msg = f"☕ {name} объявил(а) перерыв на {minutes} мин"
         elif t == "typing":
             room.broadcast({"type": "typing", "name": name, "client": body.get("client")})
+            return
+        elif t in ("readycheck", "ready"):
+            # «Все готовы?»: сервер только передаёт сигнал, запуск делает тот, кто спросил
+            room.broadcast({"type": t, "name": name, "client": body.get("client")})
             return
         elif t == "lag":
             # клиент сообщает, только когда начал или перестал отставать — это редкое событие
