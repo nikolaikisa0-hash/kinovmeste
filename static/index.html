@@ -201,7 +201,21 @@
   .fsnote { position: absolute; right: 18px; bottom: 84px; z-index: 6; max-width: min(340px, 70vw); display: flex; gap: 8px; align-items: center;
     padding: 8px 14px 8px 8px; border-radius: 16px; background: rgba(12,12,20,.7); backdrop-filter: blur(14px);
     border: 1px solid rgba(255,255,255,.1); opacity: 0; transform: translateY(10px); transition: all .35s; pointer-events: none; }
-  .fsnote.show { opacity: 1; transform: none; }
+  .fsnote.show { opacity: 1; transform: none; pointer-events: auto; cursor: pointer; }
+  /* быстрая строка сообщения в полном экране, когда чат скрыт */
+  .fsinput, .fswrite { position: absolute; right: 18px; bottom: 84px; z-index: 7; opacity: 0; pointer-events: none;
+    transform: translateY(10px); transition: opacity .3s, transform .3s; }
+  .fsinput { display: flex; gap: 6px; width: min(380px, calc(100% - 36px)); padding: 6px; border-radius: 18px;
+    background: rgba(12,12,20,.72); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.12); }
+  .fsinput input { flex: 1; min-width: 0; background: rgba(255,255,255,.08); border: 1px solid transparent; border-radius: 12px;
+    padding: 10px 12px; outline: none; }
+  .fsinput input:focus { border-color: var(--accent); }
+  .fsinput .btn { width: 42px; padding: 0; }
+  .fswrite { padding: 9px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); cursor: pointer; font-weight: 700; font-size: 13px;
+    background: rgba(12,12,20,.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .room.fs.nochat:not(.typing):not(.idle) .fswrite { opacity: 1; transform: none; pointer-events: auto; }
+  .room.fs.nochat.typing .fsinput { opacity: 1; transform: none; pointer-events: auto; }
+  .room.fs.nochat.typing .fsnote, .room.fs.nochat:not(.idle) .fsnote { bottom: 140px; }
   #syncBtn { height: 42px; }
 
   /* боковая панель */
@@ -640,6 +654,9 @@ async function renderRoom(roomId) {
         <div class="screen">
           <div class="glow"></div>
           <div class="fsnote" id="fsNote"></div>
+          <button class="fswrite" id="fsWrite" title="Написать в чат (Enter)">✏️ Написать</button>
+          <form class="fsinput" id="fsForm"><input id="fsIn" placeholder="Сообщение… Enter — отправить" maxlength="500" autocomplete="off">
+            <button class="btn" aria-label="Отправить">➤</button></form>
           <div class="player" id="player"><div class="empty">
             <div class="big">🎬</div>
             <h2>Фильм ещё не выбран</h2>
@@ -815,6 +832,30 @@ async function renderRoom(roomId) {
   }
   roomEl.addEventListener("mousemove", wake);
   roomEl.addEventListener("touchstart", wake, { passive: true });
+  // быстрое сообщение прямо из полного экрана: строка появляется, отправили — сама исчезает
+  let typingT;
+  function quickChat() {
+    roomEl.classList.add("typing");
+    clearTimeout(typingT);
+    $("#fsIn").focus();  // сразу, чтобы не потерять первые буквы
+  }
+  function hideQuick(delay) {
+    clearTimeout(typingT);
+    typingT = setTimeout(() => { if (!$("#fsIn").value.trim()) { roomEl.classList.remove("typing"); $("#fsIn").blur(); } }, delay);
+  }
+  $("#fsWrite").onclick = quickChat;
+  $("#fsNote").onclick = quickChat;
+  $("#fsForm").onsubmit = e => {
+    e.preventDefault();
+    const t = $("#fsIn").value.trim();
+    if (t) send({ type: "chat", text: t });
+    $("#fsIn").value = "";
+    hideQuick(2500);
+  };
+  $("#fsIn").addEventListener("input", () => hideQuick(8000));
+  $("#fsIn").addEventListener("blur", () => hideQuick(1500));
+  $("#fsIn").addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); $("#fsIn").value = ""; hideQuick(0); } });
+
   function fsNote(m) {
     $("#fsNote").innerHTML = `${avatar(m.name)}<span><b style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</b> ${esc(m.text)}</span>`;
     $("#fsNote").classList.add("show");
@@ -1119,7 +1160,10 @@ async function renderRoom(roomId) {
     else if (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "д") toggleLights();
     else if (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "а") setFs(!isFs());
     else if ((e.key.toLowerCase() === "c" || e.key.toLowerCase() === "с") && isFs()) toggleChat();
-    else if (e.key === "Enter") { e.preventDefault(); $("#chatin").focus(); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (isFs() && roomEl.classList.contains("nochat")) quickChat(); else $("#chatin").focus();
+    }
   });
 
   $("#chatform").onsubmit = e => {
