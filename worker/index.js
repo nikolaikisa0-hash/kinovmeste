@@ -369,6 +369,7 @@ export class Room extends DurableObject {
     this.history = [];     // что уже смотрели вместе
     this.breakUntil = null;  // «перерыв на 5 минут»: до какого времени
     this.schedule = null;    // сеанс по расписанию: когда начинаем
+    this.title = "";         // название комнаты, например «Пятничное кино»
     this.banned = {};        // кого выгнали: client_id или «n:имя» -> до какого времени
     this.session = null;     // для «итогов вечера»: { movieId, startedAt, messages, reacts, talk }
     this.timer = null;
@@ -388,7 +389,7 @@ export class Room extends DurableObject {
       updated: this.updated, created: this.created, lastActive: this.lastActive, emptySince: this.emptySince,
       chat: this.chat, adminKey: this.adminKey, everyone: this.everyone,
       proposals: this.proposals, history: this.history, breakUntil: this.breakUntil,
-      schedule: this.schedule, banned: this.banned, session: this.session,
+      schedule: this.schedule, banned: this.banned, session: this.session, title: this.title,
     });
   }
 
@@ -456,7 +457,8 @@ export class Room extends DurableObject {
     return { type: "state", movie: this.movie, playing: this.playing,
              position: this.currentPosition(), users: this.users(), everyone: this.everyone,
              admin: this.adminName(), lags: this.lags(), breakLeft: this.breakLeft(), avatars: this.avatars(),
-             scheduleLeft: this.schedule && !this.playing ? (this.schedule - Date.now()) / 1000 : null };
+             scheduleLeft: this.schedule && !this.playing ? (this.schedule - Date.now()) / 1000 : null,
+             roomTitle: this.title };
   }
 
   extras() {
@@ -465,7 +467,7 @@ export class Room extends DurableObject {
 
   // сводка для панели администратора сайта
   snapshot() {
-    return { users: this.users(), admin: this.adminName(),
+    return { users: this.users(), admin: this.adminName(), title: this.title,
              movie: this.movie && { id: this.movie.id, title: this.movie.title, source: this.movie.source || "archive" },
              playing: this.playing, position: this.position, updated: this.updated, everyone: this.everyone,
              created: this.created, lastActive: this.lastActive };
@@ -550,10 +552,16 @@ export class Room extends DurableObject {
   }
 
   // выход: «вышел» напишем позже, если человек не вернётся за LEAVE_GRACE
-  async leave(cid, name) {
+  async leave(cid, name, wasAdmin) {
     if (this.live().some(c => c.cid === cid)) return;  // уже переподключился
     if (this.presence[cid]?.leftAt != null) return;
     const now = Date.now();
+    // управлять может только админ, а он пропал со связи — пауза, чтобы фильм не ушёл без него
+    if (wasAdmin && !this.everyone && this.playing && !this.live().some(c => c.admin)) {
+      this.pauseAt(now);
+      this.broadcast(this.state());
+      this.broadcast({ type: "system", text: "⏸ Администратор пропал со связи — пауза, ждём его" });
+    }
     this.presence[cid] = { name, leftAt: now };
     this.lastActive = now;
     if (!this.live().length) this.emptySince = now;
@@ -574,7 +582,7 @@ export class Room extends DurableObject {
       if (now - Math.max(last, a.at ?? 0) < PING_TIMEOUT) continue;
       ws.serializeAttachment({ ...a, gone: true });
       try { ws.close(4001, "timeout"); } catch {}
-      await this.leave(a.cid, a.name);
+      await this.leave(a.cid, a.name, a.admin);
     }
   }
 
@@ -634,12 +642,12 @@ export class Room extends DurableObject {
   async webSocketClose(ws, code, reason) {
     try { ws.close(code === 1005 ? 1000 : code, reason); } catch {}
     const a = ws.deserializeAttachment();
-    if (a && !a.gone) await this.leave(a.cid, a.name);
+    if (a && !a.gone) await this.leave(a.cid, a.name, a.admin);
   }
 
   async webSocketError(ws) {
     const a = ws.deserializeAttachment();
-    if (a && !a.gone) await this.leave(a.cid, a.name);
+    if (a && !a.gone) await this.leave(a.cid, a.name, a.admin);
   }
 
   drop(cid, client) {
@@ -647,7 +655,7 @@ export class Room extends DurableObject {
     this.clients.delete(cid);
     client.writer.close().catch(() => {});
     if (!this.clients.size) { clearInterval(this.timer); this.timer = null; }
-    this.leave(cid, client.name);
+    this.leave(cid, client.name, client.admin);
   }
 
   async fetch(request) {
@@ -828,6 +836,11 @@ export class Room extends DurableObject {
       this.broadcast(this.extras());
       this.save();
       return;
+    } else if (t === "title") {
+      if (!admin) throw new Forbidden("Название меняет только администратор");
+      this.title = String(body.title || "").replace(/\s+/g, " ").trim().slice(0, 40);
+      this.position = this.currentPosition();
+      sysMsg = this.title ? `✏️ Комната теперь называется «${this.title}»` : "Название комнаты убрано";
     } else if (t === "mode") {
       if (!admin) throw new Forbidden("Переключать режим может только администратор");
       this.position = this.currentPosition();  // время ниже обновится — не теряем позицию
@@ -919,8 +932,12 @@ export class Room extends DurableObject {
     } else if (t === "rate") {
       // ⭐ оценка фильма — сохраняется в истории комнаты
       const stars = Math.round(Number(body.stars));
-      const h = this.movie && this.history.find(x => x.id === this.movie.id);
-      if (!h || !(stars >= 1 && stars <= 5)) return;
+      if (!this.movie || !(stars >= 1 && stars <= 5)) return;
+      let h = this.history.find(x => x.id === this.movie.id);
+      if (!h) {  // фильм включили до того, как появилась история, — заводим запись сейчас
+        h = { id: this.movie.id, title: this.movie.title, source: this.movie.source || "archive", by: name, at: Date.now() };
+        this.history = [h, ...this.history].slice(0, 20);
+      }
       h.ratings = { ...(h.ratings || {}), [name]: stars };
       this.broadcast(this.extras());
       this.save();
@@ -1047,6 +1064,12 @@ export class Registry extends DurableObject {
       .sort((a, b) => b.n - a.n).slice(0, 12);
   }
 
+  // сколько людей и комнат сейчас на сайте — только числа, без имён
+  async online() {
+    const active = Object.values(this.rooms).filter(r => r.users.length);
+    return { viewers: active.reduce((n, r) => n + r.users.length, 0), rooms: active.length };
+  }
+
   // спрашивает «живые» комнаты напрямую — на случай, если реестр что-то пропустил
   async refreshAll() {
     const active = Object.values(this.rooms).filter(r => r.users.length);
@@ -1148,10 +1171,11 @@ export default {
       }
       if (p === "/api/wiki") return json(await wikiAbout(qs.get("title") || "", qs.get("year") || "", qs.get("strict") === "1") || {});
       if (p === "/api/top") {
-        // топ недели меняется медленно — держим в памяти 10 минут, чтобы не будить реестр
+        // держим в памяти минуту, чтобы не будить реестр на каждое открытие главной
         const hit = memo.get("top");
-        if (hit && Date.now() - hit.at < 600_000) return json(hit.data);
-        const data = { items: await env.REGISTRY.get(env.REGISTRY.idFromName("all")).topWeek() };
+        if (hit && Date.now() - hit.at < 60_000) return json(hit.data);
+        const reg = env.REGISTRY.get(env.REGISTRY.idFromName("all"));
+        const data = { items: await reg.topWeek(), online: await reg.online() };
         memo.set("top", { at: Date.now(), data });
         return json(data);
       }

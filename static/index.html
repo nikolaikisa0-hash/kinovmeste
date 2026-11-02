@@ -378,6 +378,14 @@
   .sumgrid div { background: var(--bg2); border-radius: 14px; padding: 10px 12px; font-size: 13px; color: var(--muted); }
   .sumgrid b { display: block; font-size: 18px; color: var(--text); }
   .qchips { justify-content: center; flex-wrap: wrap; padding: 12px 0 0; overflow: visible; }
+  .qr { display: flex; gap: 14px; align-items: center; margin-top: 10px; }
+  .qr svg { width: 132px; height: 132px; flex: none; background: #fff; border-radius: 12px; padding: 6px; }
+  .moments { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; text-align: left; max-height: 50vh; overflow-y: auto; }
+  .moments button { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg2);
+    border-radius: 12px; padding: 9px 12px; cursor: pointer; }
+  .moments button:hover { border-color: var(--violet); }
+  .moments b { flex: none; color: #c4b5fd; font-variant-numeric: tabular-nums; }
+  .moments span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
   .hist { display: flex; flex-direction: column; gap: 4px; }
   .hrow { display: flex; align-items: center; gap: 8px; font-size: 14px; }
   .hrow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -517,6 +525,24 @@
       <div class="chips qchips" id="schedQuick"></div>
     </div>
   </div>
+</div>
+
+<!-- Таймер сна -->
+<div class="modal" id="sleepModal">
+  <div class="sheet narrow"><div class="namecard">
+    <div class="big">😴</div><h2>Таймер сна</h2>
+    <div class="muted" id="sleepSub">Через сколько поставить фильм на паузу у всех?</div>
+    <div class="chips qchips" id="sleepOpts"></div>
+  </div></div>
+</div>
+
+<!-- Моменты фильма -->
+<div class="modal" id="momentsModal">
+  <div class="sheet narrow"><div class="namecard">
+    <div class="big">📍</div><h2>Моменты фильма</h2>
+    <div class="muted">Все минуты, которые отмечали в чате. Нажмите — и вся комната перемотается</div>
+    <div class="moments" id="momentsList"></div>
+  </div></div>
 </div>
 
 <!-- Итоги вечера и оценка -->
@@ -870,7 +896,7 @@ function Catalog(container, onPick) {
         const el = document.createElement("div");
         el.className = "card" + (m.thumb ? " wide" : "");
         el.style.animationDelay = (i % 12) * 35 + "ms";
-        el.innerHTML = `<div class="poster" style="background-image:url('${poster(m)}')"><span class="play">▶</span>
+        el.innerHTML = `<div class="poster" style="background-image:url('${esc(poster(m))}')"><span class="play">▶</span>
           ${m.duration ? `<span class="badge">${clock(m.duration)}</span>` : m.year ? `<span class="badge">${esc(m.year)}</span>` : ""}</div>
           <div class="t">${esc(m.title)}</div>${m.channel ? `<div class="y">${esc(m.channel)}</div>` : ""}`;
         el.onclick = () => onPick(m);
@@ -887,7 +913,7 @@ function Catalog(container, onPick) {
 }
 
 function showDetail(m, actions) {
-  const img = poster(m);
+  const img = esc(poster(m));  // адрес картинки приходит от источника — экранируем
   $("#detailBody").innerHTML = `<div class="detail">
       ${img ? `<div class="backdrop" style="background-image:url('${img}')"></div>` : ""}
       <button class="x close" onclick="closeModal('detailModal')" aria-label="Закрыть">✕</button>
@@ -937,7 +963,7 @@ function renderHome() {
     <section class="hero">
       <div class="aurora"><i></i><i></i><i></i></div><div class="grain"></div>
       ${w ? `<div class="resume" id="resume"><span style="font-size:28px">🍿</span>
-        <span class="txt">Вы смотрели «${esc(w.title || "фильм")}» — вернуться?<small>Комната ${esc(w.id)} · ${agoText(w.at)}</small></span>
+        <span class="txt">Вы смотрели «${esc(w.title || "фильм")}» — вернуться?<small>${w.roomName ? `«${esc(w.roomName)}»` : "Комната " + esc(w.id)} · ${agoText(w.at)}</small></span>
         <a class="btn small" href="/room/${encodeURIComponent(w.id)}">Вернуться</a>
         <button class="x" id="resumeX" aria-label="Скрыть">✕</button></div>` : ""}
       <h1>Кино <em>вместе</em> —<br>даже на расстоянии</h1>
@@ -947,13 +973,13 @@ function renderHome() {
         <button class="btn ghost" id="luckyBtn"><span class="spin">🎲</span> Случайный фильм</button>
       </div>
       <div class="feats"><span>⚡ Синхронный просмотр</span><span>💬 Чат и реакции</span><span>⏱ Отсчёт 3-2-1</span>
-        <span>💡 Режим кинозала</span><span>📺 VK · Rutube · YouTube</span></div>
+        <span>💡 Режим кинозала</span><span>📺 VK · Rutube · YouTube</span><span id="onlineNow" hidden></span></div>
     </section>
     ${rooms.length ? `<section class="recent"><h3>Вернуться в комнату</h3><div class="rrow">${rooms.map(r => {
       const img = r.movieId ? poster({ id: r.movieId, thumb: r.thumb }) : "";
       return `<a class="rcard" href="/room/${encodeURIComponent(r.id)}" data-id="${esc(r.id)}">
         <span class="rimg" ${img ? `style="background-image:url('${esc(img)}')"` : ""}>${img ? "" : "🎬"}</span>
-        <span><span class="rt">${r.admin ? "👑 " : ""}${esc(r.title || "Комната без фильма")}</span>
+        <span><span class="rt">${r.admin ? "👑 " : ""}${r.roomName ? `«${esc(r.roomName)}» · ` : ""}${esc(r.title || "Комната без фильма")}</span>
           <span class="ry">${agoText(r.at)}</span></span>
         <button class="rx" title="Убрать из списка" aria-label="Убрать">✕</button></a>`; }).join("")}</div></section>` : ""}
     <section class="recent" id="topRow" hidden><h3>🔥 Смотрят в КиноВместе на этой неделе</h3><div class="rrow"></div></section>
@@ -988,7 +1014,10 @@ function renderHome() {
     row.querySelectorAll(".rcard").forEach(c => c.onclick = e => { e.preventDefault(); pick(items[+c.dataset.i]); });
   }
   fillRow($("#mineRow"), watchlist.list(), m => watchPos.get(m.id) ? "остановились на " + clock(watchPos.get(m.id)) : m.year || m.channel || "");
-  fetch("/api/top").then(r => r.json()).then(r => fillRow($("#topRow"), r.items || [],
+  fetch("/api/top").then(r => r.json()).then(r => {
+    if (r.online?.viewers) { $("#onlineNow").hidden = false; $("#onlineNow").textContent = `🟢 Сейчас смотрят: ${r.online.viewers}`; }
+    return r;
+  }).then(r => fillRow($("#topRow"), r.items || [],
     m => `включали ${m.n} ${m.n % 10 === 1 && m.n % 100 !== 11 ? "раз" : m.n % 10 >= 2 && m.n % 10 <= 4 && (m.n % 100 < 10 || m.n % 100 >= 20) ? "раза" : "раз"}`)).catch(() => {});
   Catalog($("#cat"), pick);
   $("#luckyBtn").onclick = async () => { const m = await randomMovie(); if (m) pick(m); };
@@ -1067,6 +1096,9 @@ async function renderRoom(roomId) {
               <button class="mitem" id="readyBtn"><span class="mi">✅</span><span class="ml">Все готовы? Старт по готовности</span></button>
               <button class="mitem" id="schedBtn"><span class="mi">🗓</span><span class="ml">Сеанс по расписанию</span></button>
               <button class="mitem" id="sumBtn"><span class="mi">📊</span><span class="ml">Итоги вечера и оценка</span></button>
+              <button class="mitem" id="saidBtn"><span class="mi">🙉</span><span class="ml">Что он сказал? Назад на 10 с</span></button>
+              <button class="mitem" id="momentsBtn"><span class="mi">📍</span><span class="ml">Моменты фильма</span></button>
+              <button class="mitem" id="sleepBtn"><span class="mi">😴</span><span class="ml" id="sleepLbl">Таймер сна</span></button>
               <button class="mitem" id="cdBtn"><span class="mi">⏱</span><span class="ml">Старт с отсчётом 3-2-1</span></button>
               <button class="mitem" id="breakBtn"><span class="mi">☕</span><span class="ml">Перерыв с таймером</span><span class="kbd">B</span></button>
               <button class="mitem" id="lightsBtn"><span class="mi">💡</span><span class="ml">Свет в зале</span><span class="kbd">L</span></button>
@@ -1144,7 +1176,7 @@ async function renderRoom(roomId) {
       return r;
     }, () => r));
 
-  let player = null, currentKey = null, applying = false, lastState = null;
+  let player = null, currentKey = null, applying = false, lastState = null, shownTitle = "";
   // во вкладке видно, что идёт: «▶ Фильм · КиноВместе»
   const roomTitle = () => (lastState?.movie ? `${lastState.playing ? "▶" : "⏸"} ${lastState.movie.title}` : "Комната") + " · КиноВместе";
 
@@ -1424,6 +1456,8 @@ async function renderRoom(roomId) {
           ? "Пуск, пауза, перемотка и смена фильма — для всех или только для вас 👑"
           : "Переключать может только администратор" + (admin ? " (" + esc(admin) + ")" : "")}</small></span>
           <span class="switch"><input type="checkbox" id="everyone" ${everyone ? "checked" : ""} ${amAdmin ? "" : "disabled"}><span></span></span></label>
+        ${amAdmin ? `<form class="srow" id="titleForm"><input class="sinput" id="titleInput" maxlength="40" placeholder="Название комнаты, например «Пятничное кино»"
+          value="${esc(lastState?.roomTitle || "")}"><button class="btn small">Сохранить</button></form>` : ""}
       </div>
       <div class="sgroup"><h4>Вы</h4>
         <form class="srow" id="renameForm"><input class="sinput" id="renameInput" maxlength="30" value="${esc(name)}">
@@ -1439,6 +1473,8 @@ async function renderRoom(roomId) {
           <input type="range" class="range" id="volSl" min="5" max="100" step="5" value="${volume}" aria-label="Громкость звука чата"></div>
         <label class="srow"><span class="txt">Уведомления<small>Когда вкладка свёрнута: вас упомянули, фильм запустили, начинается сеанс</small></span>
           <span class="switch"><input type="checkbox" id="notifySw" ${notifyOn ? "checked" : ""}><span></span></span></label>
+        <label class="srow"><span class="txt">Звуки реакций<small>Смех, аплодисменты и другие — когда кто-то жмёт реакцию</small></span>
+          <span class="switch"><input type="checkbox" id="rsoundSw" ${reactSoundOn ? "checked" : ""}><span></span></span></label>
         <label class="srow"><span class="txt">Свет в зале выключен<small>Всё вокруг плеера гаснет</small></span>
           <span class="switch"><input type="checkbox" id="lightsSw" ${$("#room").classList.contains("dark") ? "checked" : ""}><span></span></span></label>
       </div>
@@ -1448,6 +1484,7 @@ async function renderRoom(roomId) {
       <div class="sgroup"><h4>Пригласить друзей</h4>
         <div class="srow"><input class="sinput" readonly value="${esc(inviteUrl)}" onclick="this.select()">
           <button class="btn small" id="copy2">Копировать</button></div>
+        <div class="qr"><div id="qrBox"></div><div class="muted" style="font-size:13px">Наведите камеру телефона на код — откроется эта комната</div></div>
       </div>
       <div class="sgroup"><h4>Горячие клавиши</h4>
         <div class="muted" style="font-size:13px;line-height:2"><span class="kbd">1</span>–<span class="kbd">8</span> реакции ·
@@ -1460,6 +1497,12 @@ async function renderRoom(roomId) {
     $("#soundSw").onchange = e => setSound(e.target.checked);
     $("#volSl").onchange = e => { volume = +e.target.value; store.set("kv_volume", String(volume)); ping("test"); };
     $("#notifySw").onchange = e => setNotify(e.target.checked);
+    $("#rsoundSw").onchange = e => {
+      reactSoundOn = e.target.checked; store.set("kv_rsound", reactSoundOn ? "1" : "0");
+      if (reactSoundOn) reactSound("👏");
+    };
+    $("#titleForm")?.addEventListener("submit", e => { e.preventDefault(); send({ type: "title", title: $("#titleInput").value }); });
+    drawQr($("#qrBox"));
     $("#avas").onclick = e => {
       const b = e.target.closest("button");
       if (!b) return;
@@ -1700,6 +1743,125 @@ async function renderRoom(roomId) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
+
+  // QR-код приглашения: библиотека грузится, только когда открыли настройки
+  let qrLib;
+  function drawQr(box) {
+    qrLib ||= new Promise((res, rej) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js";
+      sc.integrity = "sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1";
+      sc.crossOrigin = "anonymous";
+      sc.onload = res; sc.onerror = rej;
+      document.head.appendChild(sc);
+    });
+    qrLib.then(() => {
+      const qr = qrcode(0, "M");
+      qr.addData(inviteUrl); qr.make();
+      box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    }).catch(() => { box.closest(".qr")?.remove(); qrLib = null; });
+  }
+
+  // 🙉 «Что он сказал?»: отмотать всем на 10 секунд (или попросить об этом, если управляет админ)
+  $("#saidBtn").onclick = () => {
+    if (!player || !lastState?.movie) return toast("Сначала выберите фильм 🎬");
+    if (canControl()) { seekBy(-10); send({ type: "chat", text: "🙉 Что он сказал? Отмотал(а) на 10 секунд" }); }
+    else send({ type: "chat", text: "🙉 Не расслышал(а) — отмотайте, пожалуйста, на 10 секунд" });
+  };
+
+  // 📍 моменты: все таймкоды из чата одним списком
+  $("#momentsBtn").onclick = () => {
+    const list = [];
+    for (const { m } of msgById.values()) {
+      for (const mt of String(m.text).matchAll(/(?:^|[^\d:])((?:\d{1,2}:)?[0-5]?\d:[0-5]\d)(?![\d:])/g)) {
+        list.push({ t: mt[1].split(":").reduce((a, x) => a * 60 + Number(x), 0), tc: mt[1], who: m.name, text: m.text });
+      }
+    }
+    list.sort((a, b) => a.t - b.t);
+    $("#momentsList").innerHTML = list.length ? list.map(x =>
+      `<button data-t="${x.t}"><b>${esc(x.tc)}</b><span>${esc(x.who)}: ${esc(x.text)}</span></button>`).join("")
+      : `<div class="muted" style="text-align:center">Пока пусто — нажмите «📍 Момент» над полем чата, чтобы отметить минуту</div>`;
+    openModal("momentsModal");
+  };
+  $("#momentsList").onclick = e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (!canControl()) return toast("Перематывать сейчас может только администратор 👑");
+    closeModal("momentsModal");
+    send({ type: "seek", position: Number(b.dataset.t) });
+    toast("⏩ Перематываем всех на " + b.querySelector("b").textContent);
+  };
+
+  // 😴 таймер сна: через N минут пауза у всех (таймер живёт во вкладке того, кто его поставил)
+  let sleepAt = null;
+  $("#sleepBtn").onclick = () => {
+    if (!canControl()) return toast("Сейчас просмотром управляет только администратор 👑");
+    $("#sleepSub").textContent = sleepAt ? `Пауза через ${Math.ceil((sleepAt - Date.now()) / 60000)} мин. Поменять?` : "Через сколько поставить фильм на паузу у всех?";
+    $("#sleepOpts").innerHTML = [15, 30, 45, 60, 90].map(m => `<span class="chip" data-m="${m}">${m} мин</span>`).join("") +
+      (sleepAt ? `<span class="chip" data-m="0">✕ Выключить</span>` : "");
+    openModal("sleepModal");
+  };
+  $("#sleepOpts").onclick = e => {
+    const c = e.target.closest(".chip");
+    if (!c) return;
+    closeModal("sleepModal");
+    const min = Number(c.dataset.m);
+    sleepAt = min ? Date.now() + min * 60000 : null;
+    send({ type: "chat", text: min ? `😴 Поставил(а) таймер сна: пауза через ${min} мин` : "😴 Таймер сна выключен" });
+    tickSleep();
+  };
+  function tickSleep() {
+    $("#sleepLbl").textContent = sleepAt ? `Таймер сна: ${Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000))} мин` : "Таймер сна";
+    $("#sleepBtn").classList.toggle("on", Boolean(sleepAt));
+    if (sleepAt && Date.now() >= sleepAt) {
+      sleepAt = null;
+      tickSleep();
+      if (lastState?.playing) {
+        const t = saneTime();
+        send({ type: "pause", ...(t != null ? { position: t } : {}) });
+        send({ type: "chat", text: "😴 Таймер сна: пауза. Спокойной ночи!" });
+      }
+    }
+  }
+  setInterval(tickSleep, 15000);
+
+  // 🔊 звуки реакций (по желанию): короткие синтезированные звуки, без файлов
+  let reactSoundOn = store.get("kv_rsound") === "1", lastReactSound = 0;
+  function reactSound(emoji) {
+    if (!reactSoundOn || volume <= 0 || Date.now() - lastReactSound < 150) return;
+    const a = audio();
+    if (!a || a.state !== "running") return;
+    lastReactSound = Date.now();
+    const g0 = .2 * (volume / 100) ** 1.6, t0 = a.currentTime;
+    const env = (g, d, len, peak) => {
+      g.gain.setValueAtTime(.0001, t0 + d);
+      g.gain.exponentialRampToValueAtTime(peak, t0 + d + .012);
+      g.gain.exponentialRampToValueAtTime(.0001, t0 + d + len);
+    };
+    const tone = (f, d, len, type = "sine", f2 = f, k = 1) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t0 + d); o.frequency.exponentialRampToValueAtTime(f2, t0 + d + len);
+      env(g, d, len, g0 * k); o.connect(g).connect(a.destination); o.start(t0 + d); o.stop(t0 + d + len + .02);
+    };
+    const noise = (d, len, freq, k = 1, type = "bandpass") => {
+      const b = a.createBuffer(1, Math.ceil(a.sampleRate * len), a.sampleRate), ch = b.getChannelData(0);
+      for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+      const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+      src.buffer = b; f.type = type; f.frequency.value = freq;
+      env(g, d, len, g0 * k); src.connect(f).connect(g).connect(a.destination); src.start(t0 + d);
+    };
+    const sounds = {
+      "😂": () => [0, .13, .26].forEach((d, i) => tone(520 + i * 40, d, .1, "triangle", 470 + i * 40)),
+      "👏": () => [0, .08, .15, .24, .31, .4].forEach(d => noise(d, .05, 1800, 1.6)),
+      "❤️": () => { tone(660, 0, .45); tone(990, .06, .45, "sine", 990, .6); },
+      "🔥": () => noise(0, .5, 900, 1.4, "lowpass"),
+      "😱": () => tone(950, 0, .45, "sawtooth", 380, .35),
+      "😢": () => tone(520, 0, .6, "sine", 330),
+      "👍": () => { tone(880, 0, .12); tone(1320, .09, .14); },
+      "🍿": () => { noise(0, .03, 3000, 2, "highpass"); noise(.11, .03, 3500, 2, "highpass"); noise(.19, .03, 2600, 2, "highpass"); },
+    };
+    try { sounds[emoji]?.(); } catch {}
+  }
 
   // 📊 итоги вечера и ⭐ оценка фильма
   async function showSummary() {
@@ -2041,6 +2203,11 @@ async function renderRoom(roomId) {
     lastState = { ...s, at: Date.now() };
     renderUsers();
     if (!unread) document.title = roomTitle();
+    if ((s.roomTitle || "") !== shownTitle) {  // название комнаты поменяли
+      shownTitle = s.roomTitle || "";
+      $("#subtitle").textContent = shownTitle ? `«${shownTitle}» · ${roomId}` : "Комната " + roomId;
+      recent.save(roomId, { roomName: shownTitle });
+    }
     if (!s.movie) return;
     if (s.movie.id !== remember.movieId) {
       remember.movieId = s.movie.id; remember(true);
@@ -2173,7 +2340,7 @@ async function renderRoom(roomId) {
     else if (m.type === "you") { amAdmin = m.admin; renderUsers(); $("#gearBtn").title = amAdmin ? "Настройки (вы администратор 👑)" : "Настройки"; }
     else if (m.type === "chat") addChat(m);
     else if (m.type === "system") addSys(m.text);
-    else if (m.type === "react") floatReaction(m.emoji, m.name);
+    else if (m.type === "react") { floatReaction(m.emoji, m.name); reactSound(m.emoji); }
     else if (m.type === "countdown") { ready = null; renderReady(); schedEnd = null; schedFired = true; tickSchedule(); showCountdown(); }
     else if (m.type === "syncreq" && amAdmin && player) {
       // администратор отвечает своим точным временем

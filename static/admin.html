@@ -255,7 +255,7 @@ function ping() {
 
 const serverNow = () => last.now + (Date.now() - loadedAt);
 const posOf = r => r.position + (r.playing ? (serverNow() - r.updated) / 1000 : 0);
-const matches = r => !query || [r.id, r.movie?.title, r.admin, ...r.users].some(v => String(v || "").toLowerCase().includes(query));
+const matches = r => !query || [r.id, r.title, r.movie?.title, r.admin, ...r.users].some(v => String(v || "").toLowerCase().includes(query));
 
 function chart() {
   const days = last.days || [];
@@ -326,7 +326,7 @@ function roomCard(r) {
     <div>
       <div class="title">${m ? esc(m.title) : "Без фильма"} ${m ? `<span class="pill">${esc(SOURCES[m.source] || m.source)}</span>` : ""}</div>
       <div class="meta">${status}
-        <span>комната <code>${id}</code></span>
+        <span>комната <code>${id}</code>${r.title ? ` «${esc(r.title)}»` : ""}</span>
         <span>👑 ${r.admin ? esc(r.admin) : on ? "админа нет в комнате" : "—"}</span>
         ${r.everyone === false ? "<span>🔒 управляет только админ</span>" : ""}
         ${on && r.activeSince ? `<span>смотрят уже ${span(serverNow() - r.activeSince)}</span>` : ""}

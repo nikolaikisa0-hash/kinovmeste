@@ -414,6 +414,7 @@ class Room:
         self.history = []    # что уже смотрели вместе
         self.break_until = None  # «перерыв на 5 минут»: до какого времени
         self.schedule = None     # сеанс по расписанию: когда начинаем
+        self.title = ""          # название комнаты, например «Пятничное кино»
         self.banned = {}         # кого выгнали: client_id или «n:имя» -> до какого времени
         self.session = None      # для «итогов вечера»
         self.admin_key = None   # секрет создателя комнаты
@@ -478,13 +479,14 @@ class Room:
             "breakLeft": self.break_left(),
             "avatars": self.avatars(),
             "scheduleLeft": self.schedule - time.time() if self.schedule and not self.playing else None,
+            "roomTitle": self.title,
         }
 
     def snapshot(self):
         """Сводка для панели администратора сайта (время — в миллисекундах, как в Cloudflare-версии)."""
         m = self.movie
         return {
-            "id": self.id, "users": self.users(), "admin": self.admin_name(),
+            "id": self.id, "users": self.users(), "admin": self.admin_name(), "title": self.title,
             "movie": m and {"id": m["id"], "title": m["title"], "source": m.get("source") or "archive"},
             "playing": self.playing, "position": self.position, "updated": self.updated * 1000,
             "everyone": self.everyone, "created": self.created * 1000, "lastActive": self.last_active * 1000,
@@ -775,6 +777,12 @@ def room_action(room, body):
                 return
             room.broadcast(room.extras())
             return
+        elif t == "title":
+            if not admin:
+                raise Forbidden("Название меняет только администратор")
+            room.title = " ".join(str(body.get("title", "")).split())[:40]
+            room.position = room.current_position()
+            sys_msg = f"✏️ Комната теперь называется «{room.title}»" if room.title else "Название комнаты убрано"
         elif t == "mode":
             if not admin:
                 raise Forbidden("Переключать режим может только администратор")
@@ -857,9 +865,13 @@ def room_action(room, body):
                 stars = round(float(body.get("stars")))
             except (TypeError, ValueError):
                 return
-            h = room.movie and next((x for x in room.history if x["id"] == room.movie["id"]), None)
-            if not h or not 1 <= stars <= 5:
+            if not room.movie or not 1 <= stars <= 5:
                 return
+            h = next((x for x in room.history if x["id"] == room.movie["id"]), None)
+            if not h:  # фильм включили до того, как появилась история, — заводим запись сейчас
+                h = {"id": room.movie["id"], "title": room.movie["title"], "source": room.movie.get("source") or "archive",
+                     "by": name, "at": time.time() * 1000}
+                room.history = ([h] + room.history)[:20]
             h["ratings"] = {**h.get("ratings", {}), name: stars}
             room.broadcast(room.extras())
             return
@@ -986,7 +998,9 @@ class Handler(BaseHTTPRequestHandler):
                 with rooms_lock:
                     items = sorted(({"id": k, "title": f["title"], "source": f["source"], "n": f["n"]}
                                     for k, f in films.items() if f["last"] > week), key=lambda f: -f["n"])[:12]
-                return self.send_json({"items": items})
+                    active = [r for r in rooms.values() if r.clients]
+                online = {"viewers": sum(len(r.clients) for r in active), "rooms": len(active)}
+                return self.send_json({"items": items, "online": online})
             if p == "/manifest.webmanifest":
                 return self.send_json(MANIFEST)
             if p in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
@@ -1142,6 +1156,12 @@ class Handler(BaseHTTPRequestHandler):
                 del room.clients[cid]
                 # «вышел» напишем позже, если человек не вернётся за LEAVE_GRACE
                 now = time.time()
+                # управлять может только админ, а он пропал со связи — пауза, чтобы фильм не ушёл без него
+                if (me["admin"] and not room.everyone and room.playing
+                        and not any(c["admin"] for c in room.clients.values())):
+                    room.pause_at(now)
+                    room.broadcast(room.state())
+                    room.broadcast({"type": "system", "text": "⏸ Администратор пропал со связи — пауза, ждём его"})
                 room.presence[cid] = {"name": me["name"], "left_at": now}
                 room.last_active = now
                 if not room.clients:
