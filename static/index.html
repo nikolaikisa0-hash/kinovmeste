@@ -45,7 +45,7 @@
   /* ---------- Кнопки ---------- */
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 12px;
     padding: 10px 18px; font-weight: 700; cursor: pointer; color: #fff; white-space: nowrap; background: var(--grad);
-    box-shadow: 0 8px 24px rgba(255,77,90,.28); transition: transform .15s, box-shadow .2s, filter .2s; }
+    box-shadow: 0 8px 24px rgba(255,77,90,.28); transition: transform .15s, box-shadow .2s, filter .2s; text-decoration: none; }
   .btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(255,77,90,.4); }
   .btn:active { transform: translateY(1px) scale(.98); }
   .btn.ghost { background: var(--panel2); box-shadow: none; border: 1px solid var(--line); color: var(--text); }
@@ -123,6 +123,27 @@
   @keyframes shimmer { to { background-position: -300% 0; } }
   @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
   .more { display: block; margin: 0 auto 50px; }
+
+  /* ---------- Главная: вернуться в комнату ---------- */
+  .resume { display: flex; align-items: center; gap: 12px; max-width: 680px; margin: 0 auto 26px; padding: 10px 10px 10px 16px; text-align: left;
+    border-radius: 18px; background: rgba(21,21,31,.75); border: 1px solid rgba(255,255,255,.12); backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); box-shadow: var(--shadow); animation: rise .5s both; }
+  .resume .txt { flex: 1; min-width: 0; font-weight: 600; }
+  .resume .txt small { display: block; color: var(--muted); font-weight: 500; font-size: 13px; }
+  .resume .x { flex: none; }
+  .recent { max-width: 1400px; margin: 0 auto; padding: 8px 24px 0; }
+  .recent h3 { margin: 10px 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); font-weight: 800; }
+  .rrow { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: thin; }
+  .rcard { position: relative; flex: none; width: 240px; display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 16px;
+    background: var(--panel); border: 1px solid var(--line); cursor: pointer; text-decoration: none; transition: transform .2s, border-color .2s; animation: rise .4s both; }
+  .rcard:hover { transform: translateY(-2px); border-color: #44445e; }
+  .rcard .rimg { width: 54px; height: 54px; flex: none; border-radius: 12px; background: var(--panel3) center/cover no-repeat; display: grid; place-items: center; font-size: 22px; }
+  .rcard .rt { font-weight: 700; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rcard .ry { font-size: 12px; color: var(--muted); }
+  .rcard .rx { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: var(--panel2);
+    color: var(--muted); cursor: pointer; font-size: 11px; opacity: 0; transition: opacity .2s; }
+  .rcard:hover .rx { opacity: 1; }
+  @media (hover: none) { .rcard .rx { opacity: 1; } }
 
   /* ---------- Комната ---------- */
   .room { display: grid; grid-template-columns: minmax(0, 1fr) 360px; height: calc(100vh - 67px); height: calc(100dvh - 67px); background: var(--bg); }
@@ -314,7 +335,7 @@
     #copyLink span { display: none; }
     #copyLink { width: 42px; height: 42px; padding: 0; }
     .hero { padding: 44px 16px 34px; }
-    .tabs, .controls, .chips, .info, .grid { padding-left: 16px; padding-right: 16px; }
+    .tabs, .controls, .chips, .info, .grid, .recent { padding-left: 16px; padding-right: 16px; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 14px; }
     .grid.wide { grid-template-columns: 1fr; }
     .room { grid-template-columns: minmax(0, 1fr); height: auto; }
@@ -444,7 +465,33 @@ function askName(sub) {
     };
   });
 }
-const CLIENT = Math.random().toString(36).slice(2, 10);
+// id вкладки переживает обновление страницы — переподключение не плодит «вышел/зашёл»
+const newClientId = () => {
+  const id = Math.random().toString(36).slice(2, 10);
+  try { sessionStorage.setItem("kv_client", id); } catch {}
+  return id;
+};
+let CLIENT = (() => { try { return sessionStorage.getItem("kv_client"); } catch { return null; } })() || newClientId();
+
+// последние комнаты — чтобы вернуться после случайного выхода
+const recent = {
+  list() { try { const a = JSON.parse(store.get("kv_recent", "[]")); return Array.isArray(a) ? a : []; } catch { return []; } },
+  save(id, patch) {
+    const all = recent.list(), old = all.find(r => r.id === id) || { id };
+    store.set("kv_recent", JSON.stringify([{ ...old, ...patch, at: Date.now() }, ...all.filter(r => r.id !== id)].slice(0, 8)));
+  },
+  remove(id) {
+    store.set("kv_recent", JSON.stringify(recent.list().filter(r => r.id !== id)));
+    if (store.get("kv_watching") === id) store.set("kv_watching", "");
+  },
+};
+function agoText(ms) {
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (m < 1) return "только что";
+  if (m < 60) return m + " мин назад";
+  if (m < 24 * 60) return Math.floor(m / 60) + " ч назад";
+  return new Date(ms).toLocaleDateString("ru", { day: "numeric", month: "short" });
+}
 
 async function newRoom(movieId) {
   const r = await fetch("/api/new-room").then(r => r.json());
@@ -606,9 +653,15 @@ function showDetail(m, actions) {
 /* ---------- Главная ---------- */
 function renderHome() {
   $("#headerActions").innerHTML = `<button class="btn" onclick="newRoom()">＋ Комната</button>`;
+  const rooms = recent.list();
+  const wid = store.get("kv_watching"), w = rooms.find(r => r.id === wid && Date.now() - r.at < 6 * 3600e3);
   $("#app").innerHTML = `
     <section class="hero">
       <div class="aurora"><i></i><i></i><i></i></div><div class="grain"></div>
+      ${w ? `<div class="resume" id="resume"><span style="font-size:28px">🍿</span>
+        <span class="txt">Вы смотрели «${esc(w.title || "фильм")}» — вернуться?<small>Комната ${esc(w.id)} · ${agoText(w.at)}</small></span>
+        <a class="btn small" href="/room/${encodeURIComponent(w.id)}">Вернуться</a>
+        <button class="x" id="resumeX" aria-label="Скрыть">✕</button></div>` : ""}
       <h1>Кино <em>вместе</em> —<br>даже на расстоянии</h1>
       <p>Создайте комнату, позовите друзей и смотрите синхронно: пауза, перемотка, чат и реакции — у всех одновременно.</p>
       <div class="cta">
@@ -618,7 +671,21 @@ function renderHome() {
       <div class="feats"><span>⚡ Синхронный просмотр</span><span>💬 Чат и реакции</span><span>⏱ Отсчёт 3-2-1</span>
         <span>💡 Режим кинозала</span><span>📺 VK · Rutube · YouTube</span></div>
     </section>
+    ${rooms.length ? `<section class="recent"><h3>Вернуться в комнату</h3><div class="rrow">${rooms.map(r => {
+      const img = r.movieId ? poster({ id: r.movieId, thumb: r.thumb }) : "";
+      return `<a class="rcard" href="/room/${encodeURIComponent(r.id)}" data-id="${esc(r.id)}">
+        <span class="rimg" ${img ? `style="background-image:url('${esc(img)}')"` : ""}>${img ? "" : "🎬"}</span>
+        <span><span class="rt">${r.admin ? "👑 " : ""}${esc(r.title || "Комната без фильма")}</span>
+          <span class="ry">${agoText(r.at)}</span></span>
+        <button class="rx" title="Убрать из списка" aria-label="Убрать">✕</button></a>`; }).join("")}</div></section>` : ""}
     <div class="catalog" id="cat"></div>`;
+  if (w) $("#resumeX").onclick = () => { store.set("kv_watching", ""); $("#resume").remove(); };
+  document.querySelectorAll(".rcard .rx").forEach(b => b.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const card = b.closest(".rcard"); recent.remove(card.dataset.id); card.remove();
+    if (!document.querySelector(".rcard")) document.querySelector(".recent")?.remove();
+    if (card.dataset.id === wid) $("#resume")?.remove();
+  });
   const pick = m => showDetail(m, [
     ["▶ Смотреть вместе", () => newRoom(m.id)],
     m.id.includes(":")
@@ -689,6 +756,19 @@ async function renderRoom(roomId) {
     </div>`;
 
   let adminKey = store.get("kv_admin_" + roomId), amAdmin = false;
+  // запоминаем комнату: на главной появится «Вернуться», а после закрытия вкладки — предложение продолжить
+  recent.save(roomId, { admin: Boolean(adminKey) });
+  let rememberedAt = 0;
+  function remember(force) {
+    const mv = lastState?.movie;
+    if (!mv || (!force && Date.now() - rememberedAt < 30000)) return;
+    rememberedAt = Date.now();
+    recent.save(roomId, { title: mv.title, movieId: mv.id, admin: Boolean(adminKey) });
+    store.set("kv_watching", roomId);
+  }
+  addEventListener("pagehide", () => remember(true));
+  // ушли на главную сами — значит, не «случайно закрыли», предлагать вернуться не нужно
+  document.querySelector(".logo").addEventListener("click", () => store.set("kv_watching", ""));
   let soundOn = store.get("kv_sound", "1") === "1";
 
   const send = body => fetch(`/api/room/${roomId}/action`, { method: "POST",
@@ -703,8 +783,12 @@ async function renderRoom(roomId) {
 
   // ---- чат ----
   let lastAuthor = null, unread = 0;
+  const seenChat = new Set();  // после переподключения сервер снова присылает историю — не дублируем
   const fmtTime = ts => new Date((ts || Date.now() / 1000) * 1000).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
   function addChat(m) {
+    const ck = `${m.ts}|${m.name}|${m.text}`;
+    if (seenChat.has(ck)) return;
+    seenChat.add(ck);
     const mine = m.name === name, box = $("#msgs"), el = document.createElement("div");
     el.className = "msg" + (mine ? " mine" : "") + (lastAuthor === m.name ? " cont" : "");
     el.innerHTML = `${avatar(m.name)}<div class="bubble"><div class="who" style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</div>` +
@@ -931,6 +1015,7 @@ async function renderRoom(roomId) {
     return {
       time: () => v.currentTime,
       paused: () => v.paused,
+      busy: () => v.seeking,  // перемотка ещё не закончилась — не мешаем ей подстройкой
       seek: t => { remoteSeek = true; v.currentTime = t; },
       play: async () => {
         try { await v.play(); }
@@ -1109,6 +1194,7 @@ async function renderRoom(roomId) {
     lastState = { ...s, at: Date.now() };
     renderUsers();
     if (!s.movie) return;
+    if (s.movie.id !== remember.movieId) { remember.movieId = s.movie.id; remember(true); } else remember();
     ensurePlayer(s.movie);
     applying = true;
     try {
@@ -1135,34 +1221,64 @@ async function renderRoom(roomId) {
     setTimeout(() => el.remove(), 3100);
   }
 
-  // Подключение к комнате; при обрыве переподключаемся с актуальным именем
-  let es, wasLost = false;
+  // Подключение к комнате: WebSocket (Cloudflare), если не вышло — Server-Sent Events (server.py).
+  // При обрыве переподключаемся с актуальным именем.
+  let es, ws, wasLost = false, useSse = !("WebSocket" in window), lastMsgAt = 0;
+  const params = () => new URLSearchParams({ client: CLIENT, name, admin: adminKey || "" });
+  const opened = () => { if (wasLost) { addSys("Соединение восстановлено ✓"); wasLost = false; } };
+  function lost() {
+    if (!wasLost) addSys("Соединение потеряно, переподключаемся…");
+    wasLost = true;
+    setTimeout(connect, 2000);
+  }
   function connect() {
-    es = new EventSource(`/api/room/${roomId}/events?` + new URLSearchParams({ client: CLIENT, name, admin: adminKey }));
-    es.onopen = () => { if (wasLost) { addSys("Соединение восстановлено ✓"); wasLost = false; } };
-    es.onmessage = e => {
-      const m = JSON.parse(e.data);
-      if (m.type === "state") applyState(m);
-      else if (m.type === "users") { users = m.users; renderUsers(); }
-      else if (m.type === "you") { amAdmin = m.admin; renderUsers(); if (amAdmin) $("#gearBtn").title = "Настройки (вы администратор 👑)"; }
-      else if (m.type === "chat") addChat(m);
-      else if (m.type === "system") addSys(m.text);
-      else if (m.type === "react") floatReaction(m.emoji, m.name);
-      else if (m.type === "countdown") showCountdown();
-      else if (m.type === "syncreq" && amAdmin && player) {
-        // администратор отвечает своим точным временем
-        const t = player.time();
-        if (Number.isFinite(t)) send({ type: "sync", position: t, playing: !player.paused() });
-      }
-    };
-    es.onerror = () => {
-      es.close();
-      if (!wasLost) addSys("Соединение потеряно, переподключаемся…");
-      wasLost = true;
-      setTimeout(connect, 2000);
+    if (useSse) return connectSse();
+    let ok = false;
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/room/${roomId}/ws?` + params());
+    ws.onopen = () => { ok = true; lastMsgAt = Date.now(); opened(); };
+    ws.onmessage = e => { lastMsgAt = Date.now(); if (e.data !== "pong") onMsg(JSON.parse(e.data)); };
+    ws.onclose = e => {
+      if (!ok && !wasLost) { useSse = true; return connect(); }  // сервер не умеет WebSocket
+      if (e.code === 4000) { CLIENT = newClientId(); return connect(); }  // этот id заняла другая вкладка
+      lost();
     };
   }
+  // ping не будит комнату на сервере; без ответа долго — соединение мёртвое, переподключаемся
+  setInterval(() => {
+    if (ws?.readyState !== 1) return;
+    if (Date.now() - lastMsgAt > 70000) return ws.close();
+    ws.send("ping");
+  }, 25000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && ws?.readyState === 1) ws.send("ping"); });
+  function connectSse() {
+    es = new EventSource(`/api/room/${roomId}/events?` + params());
+    es.onopen = opened;
+    es.onmessage = e => onMsg(JSON.parse(e.data));
+    es.onerror = () => { es.close(); lost(); };
+  }
+  function onMsg(m) {
+    if (m.type === "state") applyState(m);
+    else if (m.type === "users") {
+      users = m.users;
+      if (lastState) Object.assign(lastState, { users: m.users }, "admin" in m ? { admin: m.admin } : {});
+      renderUsers();
+    }
+    else if (m.type === "you") { amAdmin = m.admin; renderUsers(); if (amAdmin) $("#gearBtn").title = "Настройки (вы администратор 👑)"; }
+    else if (m.type === "chat") addChat(m);
+    else if (m.type === "system") addSys(m.text);
+    else if (m.type === "react") floatReaction(m.emoji, m.name);
+    else if (m.type === "countdown") showCountdown();
+    else if (m.type === "syncreq" && amAdmin && player) {
+      // администратор отвечает своим точным временем
+      const t = player.time();
+      if (Number.isFinite(t)) send({ type: "sync", position: t, playing: !player.paused() });
+    }
+  }
   connect();
+  // сервер не рассылает время по таймеру (комната спит) — подстраиваемся сами по последнему состоянию
+  setInterval(() => {
+    if (lastState?.movie && player && !applying && !player.busy?.()) applyState({ ...lastState, position: expected() });
+  }, 5000);
 
   const EMOJI = ["😂","😱","❤️","👍","🔥","😢","🍿","👏"];
   $("#reactbar").innerHTML = EMOJI.map((e, i) => `<button title="Реакция (клавиша ${i + 1})">${e}</button>`).join("");

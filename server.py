@@ -3,8 +3,11 @@
 
 Каталог: фильмы в общественном достоянии из Internet Archive (archive.org).
 Синхронизация: Server-Sent Events (сервер -> клиенты) + POST (клиент -> сервер).
+Панель администратора сайта: /admin (пароль — переменная окружения ADMIN_PASSWORD).
 Только стандартная библиотека Python 3.8+.
 """
+import hashlib
+import hmac
 import html
 import json
 import math
@@ -329,6 +332,9 @@ def fetch_subtitles(ident, name):
 
 # ---------------- Комнаты ----------------
 
+LEAVE_GRACE = 20  # столько секунд ждём переподключения, прежде чем написать «вышел»
+
+
 class Room:
     def __init__(self, rid):
         self.id = rid
@@ -337,7 +343,12 @@ class Room:
         self.playing = False
         self.position = 0.0
         self.updated = time.time()
+        self.created = time.time()
+        self.last_active = time.time()
+        self.empty_since = None  # когда ушёл последний зритель
+        self.active_since = None  # с какого момента в комнате кто-то есть (для «комнато-часов»)
         self.clients = {}  # client_id -> {"name", "queue", "admin"}
+        self.presence = {}  # client_id -> {"name", "left_at"} — чтобы переподключение не писало «вышел/зашёл»
         self.chat = []
         self.admin_key = None   # секрет создателя комнаты
         self.everyone = True    # могут ли все управлять просмотром
@@ -347,16 +358,43 @@ class Room:
             return self.position + (time.time() - self.updated)
         return self.position
 
+    def pause_at(self, t):
+        """Ставит фильм на паузу там, где он был в момент t."""
+        if self.playing:
+            self.position += max(0.0, t - self.updated)
+            self.updated = t
+            self.playing = False
+
+    def users(self):
+        return sorted({c["name"] for c in self.clients.values()})
+
+    def admin_name(self):
+        return next((c["name"] for c in self.clients.values() if c["admin"]), None)
+
     def state(self):
         return {
             "type": "state",
             "movie": self.movie,
             "playing": self.playing,
             "position": self.current_position(),
-            "users": sorted({c["name"] for c in self.clients.values()}),
+            "users": self.users(),
             "everyone": self.everyone,
-            "admin": next((c["name"] for c in self.clients.values() if c["admin"]), None),
+            "admin": self.admin_name(),
         }
+
+    def snapshot(self):
+        """Сводка для панели администратора сайта (время — в миллисекундах, как в Cloudflare-версии)."""
+        m = self.movie
+        return {
+            "id": self.id, "users": self.users(), "admin": self.admin_name(),
+            "movie": m and {"id": m["id"], "title": m["title"], "source": m.get("source") or "archive"},
+            "playing": self.playing, "position": self.position, "updated": self.updated * 1000,
+            "everyone": self.everyone, "created": self.created * 1000, "lastActive": self.last_active * 1000,
+            "seen": self.last_active * 1000,
+        }
+
+    def broadcast_users(self):
+        self.broadcast({"type": "users", "users": self.users(), "admin": self.admin_name()})
 
     def is_admin(self, key):
         return bool(key) and key == self.admin_key
@@ -375,6 +413,74 @@ def get_room(rid):
         if rid not in rooms:
             rooms[rid] = Room(rid)
         return rooms[rid]
+
+
+# «комнато-часы» за сутки (по UTC, как лимит Cloudflare) — для панели администратора
+FREE_ROOM_HOURS = 28
+usage = {"day": 0, "sec": 0.0}
+
+
+def day_start(now):
+    day = int(now // 86400)
+    if usage["day"] != day:
+        usage.update(day=day, sec=0.0)
+    return day * 86400
+
+
+def track_usage(room):
+    """Вызывается под room.lock после входа или выхода."""
+    now = time.time()
+    with rooms_lock:
+        start = day_start(now)
+        if room.clients and room.active_since is None:
+            room.active_since = now
+        elif not room.clients and room.active_since is not None:
+            usage["sec"] += now - max(room.active_since, start)
+            room.active_since = None
+
+
+def rooms_overview():
+    now = time.time()
+    with rooms_lock:
+        start = day_start(now)
+        sec = usage["sec"] + sum(now - max(r.active_since, start) for r in rooms.values() if r.active_since)
+        all_rooms = list(rooms.values())
+    out = []
+    for r in all_rooms:
+        with r.lock:
+            if r.clients or r.movie or now - r.last_active < 3 * 86400:
+                out.append(r.snapshot())
+    out.sort(key=lambda r: (-len(r["users"]), -r["seen"]))
+    return {"now": now * 1000, "rooms": out,
+            "usage": {"roomHours": sec / 3600, "limitHours": FREE_ROOM_HOURS}}
+
+
+def join_room(room, cid, name):
+    """Вход (под room.lock); True — это переподключение, писать «зашёл» не нужно."""
+    back = cid in room.presence
+    if not back:  # закрыл вкладку и открыл снова — новый id, но то же имя
+        same = next((k for k, p in room.presence.items() if p["left_at"] and p["name"] == name), None)
+        if same:
+            del room.presence[same]
+            back = True
+    room.presence[cid] = {"name": name, "left_at": None}
+    room.empty_since = None
+    room.last_active = time.time()
+    return back
+
+
+def finish_leave(room, cid):
+    """Через LEAVE_GRACE после выхода: человек не вернулся — пишем «вышел»."""
+    with room.lock:
+        p = room.presence.get(cid)
+        if not p or not p["left_at"] or cid in room.clients:
+            return
+        del room.presence[cid]
+        if p["name"] not in room.users():
+            room.broadcast({"type": "system", "text": f"{p['name']} вышел(а)"})
+        # все разошлись — фильм встаёт на паузу там, где ушёл последний
+        if not room.clients and room.empty_since:
+            room.pause_at(room.empty_since)
 
 
 REACTIONS = {"😂", "😱", "❤️", "👍", "🔥", "😢", "🍿", "👏"}
@@ -462,17 +568,43 @@ def room_action(room, body):
             new = str(body.get("new", "")).strip()[:30]
             if client and new and new != client["name"]:
                 old, client["name"] = client["name"], new
+                if body.get("client") in room.presence:
+                    room.presence[body["client"]]["name"] = new
                 room.broadcast({"type": "system", "text": f"{old} теперь {new}"})
-                room.broadcast({"type": "users", "users": sorted({c["name"] for c in room.clients.values()})})
+                room.broadcast_users()
             return
         else:
             return
-        room.updated = time.time()
+        room.updated = room.last_active = time.time()
         st = room.state()
         st["by"] = body.get("client")
         room.broadcast(st)
         if sys_msg:
             room.broadcast({"type": "system", "text": sys_msg})
+
+
+# ---------------- Панель администратора сайта ----------------
+
+ADMIN_TTL = 12 * 3600  # вход действует 12 часов
+
+
+def admin_password():
+    return os.environ.get("ADMIN_PASSWORD", "")
+
+
+def admin_token(exp):
+    sig = hmac.new(admin_password().encode(), f"kv-admin:{exp}".encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def admin_session(cookie_header):
+    if not admin_password():
+        return False
+    m = re.search(r"(?:^|;\s*)kv_admin=(\d+)\.([0-9a-f]{64})", cookie_header or "")
+    if not m or int(m.group(1)) < time.time():
+        return False
+    # сравнение за постоянное время: по нему нельзя угадывать подпись побуквенно
+    return hmac.compare_digest(admin_token(m.group(1)), f"{m.group(1)}.{m.group(2)}")
 
 
 # ---------------- HTTP ----------------
@@ -481,7 +613,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "KinoVmeste/1.0"
 
     def log_message(self, fmt, *args):
-        if "/events" not in (args[0] if args else ""):
+        if "/events" not in str(args[0] if args else ""):
             super().log_message(fmt, *args)
 
     def send_json(self, obj, code=200):
@@ -511,6 +643,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/" or p.startswith("/room/"):
                 return self.send_file(os.path.join(STATIC, "index.html"), "text/html; charset=utf-8")
+            if p in ("/admin", "/admin/"):
+                return self.send_file(os.path.join(STATIC, "admin.html"), "text/html; charset=utf-8")
+            if p == "/api/admin/status":
+                return self.send_json({"enabled": bool(admin_password()),
+                                       "authed": admin_session(self.headers.get("Cookie"))})
+            if p == "/api/admin/rooms":
+                if not admin_password():
+                    return self.send_json({"error": "disabled"}, 503)
+                if not admin_session(self.headers.get("Cookie")):
+                    return self.send_json({"error": "auth"}, 401)
+                return self.send_json(rooms_overview())
             if p == "/api/search":
                 page = max(1, int(qs.get("page", ["1"])[0]))
                 return self.send_json(search_movies(
@@ -549,8 +692,40 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": str(e)}, 502)
         self.send_error(404)
 
+    def send_cookie_json(self, obj, cookie):
+        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def admin_post(self, p, body):
+        if not admin_password():
+            return self.send_json({"error": "disabled"}, 503)
+        if p == "/api/admin/login":
+            given = str(body.get("password", "")).encode()
+            if not hmac.compare_digest(hashlib.sha256(given).digest(),
+                                       hashlib.sha256(admin_password().encode()).digest()):
+                time.sleep(0.6)  # перебор паролей — медленнее
+                return self.send_json({"error": "Неверный пароль"}, 401)
+            exp = int(time.time()) + ADMIN_TTL
+            return self.send_cookie_json({"ok": True}, f"kv_admin={admin_token(exp)}; Path=/; HttpOnly; "
+                                                       f"SameSite=Strict; Max-Age={ADMIN_TTL}")
+        if p == "/api/admin/logout":
+            return self.send_cookie_json({"ok": True}, "kv_admin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+        self.send_error(404)
+
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
+        if p.startswith("/api/admin/"):
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except ValueError:
+                body = {}
+            return self.admin_post(p, body if isinstance(body, dict) else {})
         if p.startswith("/api/room/") and p.endswith("/action"):
             length = int(self.headers.get("Content-Length", 0))
             try:
@@ -568,20 +743,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def sse(self, rid, qs):
         room = get_room(rid)
-        cid = qs.get("client", [secrets.token_hex(4)])[0]
+        cid = qs.get("client", [secrets.token_hex(4)])[0][:40]
         name = qs.get("name", ["Гость"])[0][:30]
         key = qs.get("admin", [""])[0][:64]
         q = queue.Queue()
         with room.lock:
             if key and room.admin_key is None:
                 room.admin_key = key  # первым с секретом приходит создатель комнаты
+            back = join_room(room, cid, name)
             room.clients[cid] = {"name": name, "queue": q, "admin": room.is_admin(key)}
             q.put({"type": "you", "admin": room.is_admin(key)})
             q.put(room.state())
             for m in room.chat[-30:]:
                 q.put(m)
-            room.broadcast({"type": "system", "text": f"{name} зашёл(а) в комнату"})
-            room.broadcast({"type": "users", "users": sorted({c["name"] for c in room.clients.values()})})
+            if not back:
+                room.broadcast({"type": "system", "text": f"{name} зашёл(а) в комнату"})
+            room.broadcast_users()
+            track_usage(room)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -605,10 +783,18 @@ class Handler(BaseHTTPRequestHandler):
                 me = room.clients.get(cid)
                 if not me or me["queue"] is not q:
                     return  # клиент уже переподключился новым соединением
-                name = me["name"]
                 del room.clients[cid]
-                room.broadcast({"type": "system", "text": f"{name} вышел(а)"})
-                room.broadcast({"type": "users", "users": sorted({c["name"] for c in room.clients.values()})})
+                # «вышел» напишем позже, если человек не вернётся за LEAVE_GRACE
+                now = time.time()
+                room.presence[cid] = {"name": me["name"], "left_at": now}
+                room.last_active = now
+                if not room.clients:
+                    room.empty_since = now
+                room.broadcast_users()
+                track_usage(room)
+            timer = threading.Timer(LEAVE_GRACE, finish_leave, (room, cid))
+            timer.daemon = True
+            timer.start()
 
 
 if __name__ == "__main__":

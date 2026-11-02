@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b10">
+<meta name="robots" content="noindex">
+<title>Панель · КиноВместе</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0b10; --bg2: #101018; --panel: #15151f; --panel2: #1d1d2a; --panel3: #262636;
+    --line: #2a2a3b; --text: #f1f0f6; --muted: #9a98ad; --dim: #6c6a80;
+    --accent: #ff4d5a; --accent2: #ff9a3c; --violet: #8b5cf6; --ok: #34d399; --warn: #fbbf24;
+    --grad: linear-gradient(135deg, var(--accent), var(--accent2));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh;
+    font: 15px/1.5 "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; }
+  button, input { font: inherit; color: inherit; }
+  .muted { color: var(--muted); }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 24px; position: sticky; top: 0; z-index: 10;
+    background: rgba(11,11,16,.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid rgba(255,255,255,.06); }
+  .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 800 19px/1 "Unbounded", sans-serif; letter-spacing: -.5px; }
+  .logo .mark { width: 34px; height: 34px; border-radius: 10px; background: var(--grad); display: grid; place-items: center; font-size: 18px; }
+  .logo b { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .grow { flex: 1; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 12px; padding: 10px 18px;
+    font-weight: 700; cursor: pointer; color: #fff; white-space: nowrap; background: var(--grad); text-decoration: none; transition: transform .15s, filter .2s; }
+  .btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+  .btn.ghost { background: var(--panel2); border: 1px solid var(--line); }
+  .btn.small { padding: 7px 12px; font-size: 14px; border-radius: 10px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font: 800 26px/1.2 "Unbounded", sans-serif; margin: 0 0 6px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 30px 0 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+  .login { max-width: 420px; margin: 10vh auto 0; text-align: center; }
+  .login .big { font-size: 52px; }
+  .login form { display: flex; gap: 8px; margin-top: 18px; }
+  .login input { flex: 1; min-width: 0; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; outline: none; }
+  .login input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(255,77,90,.15); }
+  .err { color: #fca5a5; min-height: 1.5em; margin-top: 10px; font-weight: 600; }
+  ol.steps { text-align: left; color: #cfcde0; padding-left: 22px; line-height: 1.8; }
+  code { background: var(--panel3); padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-top: 18px; align-items: start; }
+  .tile .num { font: 800 34px/1.1 "Unbounded", sans-serif; }
+  .tile .lbl { color: var(--muted); font-size: 13px; font-weight: 600; }
+  .bar { height: 8px; border-radius: 99px; background: var(--panel3); overflow: hidden; margin-top: 10px; }
+  .bar i { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width .5s; }
+  .bar.mid i { background: var(--warn); } .bar.high i { background: var(--accent); }
+  .hint { font-size: 12px; color: var(--dim); margin-top: 8px; }
+  .rooms { display: grid; gap: 12px; }
+  .room { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px; align-items: center; }
+  .room .title { font-weight: 800; font-size: 16px; overflow-wrap: anywhere; }
+  .room .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: var(--panel2); border: 1px solid var(--line); }
+  .pill.play { background: rgba(52,211,153,.14); border-color: rgba(52,211,153,.35); color: #6ee7b7; }
+  .pill.pause { background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.3); color: #fcd34d; }
+  .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .person { padding: 3px 10px; border-radius: 999px; background: var(--panel2); font-size: 13px; font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); padding: 30px; }
+  .idle { opacity: .7; }
+  .upd { font-size: 12px; color: var(--dim); }
+  @media (max-width: 640px) {
+    header { padding: 10px 16px; }
+    .logo span:last-child { display: none; }
+    .room { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/"><span class="mark">🍿</span><span>Кино<b>Вместе</b></span></a>
+  <span class="muted">Панель администратора</span>
+  <span class="grow"></span>
+  <span id="hact"></span>
+</header>
+<main id="app"><div class="empty">Загрузка…</div></main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const SOURCES = { archive: "🎞 Internet Archive", youtube: "▶ YouTube", vk: "VK Видео", rutube: "Rutube" };
+
+function clock(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+}
+function ago(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "только что";
+  if (s < 3600) return Math.floor(s / 60) + " мин назад";
+  if (s < 86400) return Math.floor(s / 3600) + " ч назад";
+  return new Date(ms).toLocaleString("ru", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  return { status: r.status, data: await r.json().catch(() => ({})) };
+}
+
+async function start() {
+  const { data } = await api("/api/admin/status");
+  if (!data.enabled) return showDisabled();
+  if (!data.authed) return showLogin();
+  showDashboard();
+}
+
+function showDisabled() {
+  $("#hact").innerHTML = "";
+  $("#app").innerHTML = `<div class="card login"><div class="big">🔒</div><h1>Панель выключена</h1>
+    <p class="muted">Чтобы её включить, задайте пароль администратора:</p>
+    <ol class="steps">
+      <li>Cloudflare → <b>Workers &amp; Pages</b> → <b>kinovmeste</b></li>
+      <li><b>Settings</b> → <b>Variables and Secrets</b> → <b>Add</b></li>
+      <li>Тип <b>Secret</b>, имя <code>ADMIN_PASSWORD</code>, значение — ваш пароль</li>
+      <li><b>Deploy</b>, затем обновите эту страницу</li>
+    </ol>
+    <p class="muted" style="font-size:13px">Локально: <code>ADMIN_PASSWORD=пароль python3 server.py</code></p></div>`;
+}
+
+function showLogin() {
+  $("#hact").innerHTML = "";
+  $("#app").innerHTML = `<div class="card login"><div class="big">🛠</div><h1>Вход для администратора</h1>
+    <div class="muted">Здесь видно, какие комнаты сейчас открыты</div>
+    <form id="lf"><input type="password" id="pw" placeholder="Пароль" autocomplete="current-password" required>
+      <button class="btn">Войти</button></form><div class="err" id="err"></div></div>`;
+  $("#pw").focus();
+  $("#lf").onsubmit = async e => {
+    e.preventDefault();
+    $("#err").textContent = "";
+    const { status, data } = await api("/api/admin/login", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) });
+    if (status === 200 && data.ok) return showDashboard();
+    $("#err").textContent = data.error || "Не получилось войти";
+    $("#pw").select();
+  };
+}
+
+let timer = null, ticker = null, last = null, loadedAt = 0;
+
+async function showDashboard() {
+  $("#hact").innerHTML = `<button class="btn ghost small" id="chk" title="Спросить каждую комнату напрямую">🔄 Проверить</button>
+    <button class="btn ghost small" id="out">Выйти</button>`;
+  $("#out").onclick = async () => { clearInterval(timer); await api("/api/admin/logout", { method: "POST" }); showLogin(); };
+  $("#chk").onclick = () => load(true);
+  $("#app").innerHTML = `<h1>Комнаты</h1><div class="upd" id="upd"></div><div id="dash"></div>`;
+  await load(true);  // при открытии сверяемся с самими комнатами, дальше — только реестр
+  clearInterval(timer);
+  timer = setInterval(() => { if (!document.hidden) load(false); }, 5000);
+  ticker ??= setInterval(tick, 1000);
+}
+
+async function load(refresh) {
+  const { status, data } = await api("/api/admin/rooms" + (refresh ? "?refresh=1" : ""));
+  if (status === 401) { clearInterval(timer); return showLogin(); }
+  if (status === 503) { clearInterval(timer); return showDisabled(); }
+  if (data.error) { $("#upd").textContent = "Ошибка: " + data.error; return; }
+  // часы сервера и браузера могут расходиться — считаем от времени сервера
+  last = data; loadedAt = Date.now();
+  render();
+}
+
+const serverNow = () => last.now + (Date.now() - loadedAt);
+const posOf = r => r.position + (r.playing ? (serverNow() - r.updated) / 1000 : 0);
+
+function render() {
+  const active = last.rooms.filter(r => r.users.length), idle = last.rooms.filter(r => !r.users.length);
+  const people = active.reduce((n, r) => n + r.users.length, 0);
+  const u = last.usage, pct = Math.min(100, u.roomHours / u.limitHours * 100);
+  $("#dash").innerHTML = `
+    <div class="tiles">
+      <div class="card tile"><div class="num">${active.length}</div><div class="lbl">комнат открыто сейчас</div></div>
+      <div class="card tile"><div class="num">${people}</div><div class="lbl">зрителей онлайн</div></div>
+      <div class="card tile"><div class="num">${u.roomHours.toFixed(1)} <span class="muted" style="font-size:16px">/ ~${u.limitHours} ч</span></div>
+        <div class="lbl">комнато-часов сегодня</div>
+        <div class="bar ${pct > 80 ? "high" : pct > 50 ? "mid" : ""}"><i style="width:${pct}%"></i></div>
+        <div class="hint">Сколько часов сегодня в комнатах кто-то был (сутки — по UTC, с 03:00 мск).
+          Бесплатный Cloudflare даёт около ${u.limitHours} часов работы комнат в сутки. Комнаты «спят» между событиями,
+          поэтому реальный расход обычно заметно меньше этой оценки.</div></div>
+    </div>
+    <h2>Сейчас смотрят · ${active.length}</h2>
+    <div class="rooms">${active.length ? active.map(roomCard).join("") : `<div class="card empty">Пока никого нет 🍿</div>`}</div>
+    ${idle.length ? `<h2>Недавно были · ${idle.length}</h2><div class="rooms">${idle.slice(0, 30).map(roomCard).join("")}</div>` : ""}`;
+  tick();
+}
+
+function roomCard(r) {
+  const on = r.users.length > 0, m = r.movie;
+  const status = !m ? `<span class="pill">🎬 фильм не выбран</span>`
+    : `<span class="pill ${r.playing && on ? "play" : "pause"}">${r.playing && on ? "▶ идёт" : "⏸ пауза"}
+       · <span class="pos" data-id="${esc(r.id)}">${clock(posOf(r))}</span></span>`;
+  return `<div class="card room${on ? "" : " idle"}">
+    <div>
+      <div class="title">${m ? esc(m.title) : "Без фильма"} ${m ? `<span class="pill">${esc(SOURCES[m.source] || m.source)}</span>` : ""}</div>
+      <div class="meta">${status}
+        <span>🚪 <code>${esc(r.id)}</code></span>
+        <span>👑 ${r.admin ? esc(r.admin) : on ? "админа нет в комнате" : "—"}</span>
+        ${r.everyone === false ? "<span>🔒 управляет только админ</span>" : ""}
+        <span>создана ${ago(r.created)}</span>
+        <span>активность ${ago(r.lastActive)}</span></div>
+      ${on ? `<div class="people">${r.users.map(n => `<span class="person">${n === r.admin ? "👑 " : ""}${esc(n)}</span>`).join("")}</div>` : ""}
+    </div>
+    <a class="btn small${on ? "" : " ghost"}" href="/room/${encodeURIComponent(r.id)}" target="_blank" rel="noopener">Зайти в комнату →</a>
+  </div>`;
+}
+
+// позиция фильма тикает каждую секунду без запросов к серверу
+function tick() {
+  if (!last) return;
+  for (const el of document.querySelectorAll(".pos")) {
+    const r = last.rooms.find(x => x.id === el.dataset.id);
+    if (r) el.textContent = clock(posOf(r));
+  }
+  $("#upd").textContent = "Обновлено " + new Date(loadedAt).toLocaleTimeString("ru") + " · обновляется само каждые 5 секунд";
+}
+
+start();
+</script>
+</body>
+</html>
