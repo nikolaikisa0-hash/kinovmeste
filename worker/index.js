@@ -515,6 +515,31 @@ export class Room extends DurableObject {
     if (next) this.ctx.storage.setAlarm(next);
   }
 
+  // команды из панели администратора сайта
+  async siteAdmin(action, text) {
+    if (action === "announce") {
+      this.broadcast({ type: "announce", text: String(text || "").trim().slice(0, 300) });
+      return { ok: true };
+    }
+    if (action === "close") {
+      // всех вежливо выпроваживаем и забываем комнату целиком
+      this.broadcast({ type: "closed" });
+      for (const ws of this.ctx.getWebSockets()) {
+        ws.serializeAttachment({ ...ws.deserializeAttachment(), gone: true });
+        try { ws.close(4002, "closed"); } catch {}
+      }
+      for (const [, c] of this.clients) c.writer.close().catch(() => {});
+      this.clients.clear();
+      clearInterval(this.timer); this.timer = null;
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      Object.assign(this, { movie: null, playing: false, position: 0, chat: [], adminKey: null, everyone: true,
+                            presence: {}, proposals: [], history: [], breakUntil: null });
+      return { ok: true };
+    }
+    return { error: "unknown action" };
+  }
+
   // реестр просит свежие данные (кнопка «Проверить» в панели администратора)
   async refresh() {
     await this.sweep();
@@ -751,39 +776,71 @@ export class Registry extends DurableObject {
     ctx.blockConcurrencyWhile(async () => {
       this.rooms = (await ctx.storage.get("rooms")) || {};
       this.usage = (await ctx.storage.get("usage")) || { day: 0, ms: 0 };
+      this.days = (await ctx.storage.get("days")) || [];  // итоги прошлых суток
+      this.films = (await ctx.storage.get("films")) || {};  // что включали: id -> { title, source, n, last }
     });
   }
 
-  // лимит Cloudflare обнуляется в полночь по UTC
+  // лимит Cloudflare обнуляется в полночь по UTC; итоги прошедших суток уходят в историю
   rollover(now) {
     const day = Math.floor(now / DAY_MS);
-    if (this.usage.day !== day) this.usage = { day, ms: 0 };
+    if (this.usage.day !== day) {
+      const u = this.usage;
+      if (u.day) this.days = [...this.days, { day: u.day, hours: u.ms / 3_600_000, peak: u.peak || 0,
+                                              rooms: (u.rooms || []).length, films: u.films || 0 }].slice(-30);
+      this.usage = { day, ms: 0, peak: 0, rooms: [], films: 0 };
+    }
     return day * DAY_MS;
   }
 
   async update(id, info) {
     const now = Date.now(), dayStart = this.rollover(now);
-    const prev = this.rooms[id];
+    const prev = this.rooms[id], u = this.usage;
     const was = prev?.users?.length > 0, is = info.users.length > 0;
     let activeSince = prev?.activeSince ?? null;
     // «комнато-часы»: сколько времени в комнате кто-то был
-    if (was && !is) { this.usage.ms += now - Math.max(activeSince ?? now, dayStart); activeSince = null; }
+    if (was && !is) { u.ms += now - Math.max(activeSince ?? now, dayStart); activeSince = null; }
     if (!was && is) activeSince = now;
     this.rooms[id] = { ...info, id, activeSince, seen: now };
+    // статистика дня: сколько комнат было, пик зрителей, сколько раз включали фильмы
+    u.rooms ??= [];
+    if (is && !u.rooms.includes(id) && u.rooms.length < 1000) u.rooms.push(id);
+    u.peak = Math.max(u.peak || 0, Object.values(this.rooms).reduce((n, r) => n + r.users.length, 0));
+    if (info.movie && info.movie.id !== prev?.movie?.id) {
+      u.films = (u.films || 0) + 1;
+      const f = this.films[info.movie.id] || { n: 0 };
+      this.films[info.movie.id] = { title: info.movie.title, source: info.movie.source, n: f.n + 1, last: now };
+      const ids = Object.keys(this.films);
+      if (ids.length > 200) {  // храним только недавние
+        ids.sort((a, b) => this.films[a].last - this.films[b].last).slice(0, ids.length - 200).forEach(k => delete this.films[k]);
+      }
+    }
     for (const [k, r] of Object.entries(this.rooms)) {  // давно пустые комнаты забываем
       if (!r.users.length && now - r.seen > 3 * DAY_MS) delete this.rooms[k];
     }
+    await this.ctx.storage.put({ rooms: this.rooms, usage: this.usage, days: this.days, films: this.films });
+  }
+
+  async remove(id) {
+    const r = this.rooms[id];
+    if (!r) return;
+    if (r.users.length && r.activeSince) this.usage.ms += Date.now() - Math.max(r.activeSince, this.rollover(Date.now()));
+    delete this.rooms[id];
     await this.ctx.storage.put({ rooms: this.rooms, usage: this.usage });
   }
 
   async list() {
-    const now = Date.now(), dayStart = this.rollover(now);
-    let ms = this.usage.ms;
+    const now = Date.now(), dayStart = this.rollover(now), u = this.usage;
+    let ms = u.ms;
     for (const r of Object.values(this.rooms)) {
       if (r.users.length && r.activeSince) ms += now - Math.max(r.activeSince, dayStart);
     }
     const rooms = Object.values(this.rooms).sort((a, b) => b.users.length - a.users.length || b.seen - a.seen);
-    return { now, rooms, usage: { roomHours: ms / 3_600_000, limitHours: FREE_ROOM_HOURS } };
+    const today = { day: u.day, hours: ms / 3_600_000, peak: u.peak || 0, rooms: (u.rooms || []).length, films: u.films || 0 };
+    const top = Object.entries(this.films).map(([id, f]) => ({ id, ...f }))
+      .sort((a, b) => b.n - a.n || b.last - a.last).slice(0, 8);
+    return { now, rooms, usage: { roomHours: today.hours, limitHours: FREE_ROOM_HOURS },
+             today, days: [...this.days.slice(-13), today], top };
   }
 
   // спрашивает «живые» комнаты напрямую — на случай, если реестр что-то пропустил
@@ -853,6 +910,16 @@ async function adminApi(request, env, url) {
       "Content-Type": "application/json; charset=utf-8", "Set-Cookie": adminCookie(url, "", 0) } });
   }
   if (!(await isAdminSession(request, env))) return json({ error: "auth" }, 401);
+  if (p === "/api/admin/room" && request.method === "POST") {
+    let body = {};
+    try { body = await request.json(); } catch {}
+    const id = String(body.id || "");
+    if (!/^[\w-]{1,64}$/.test(id) || !["announce", "close"].includes(body.action)) return json({ error: "bad request" }, 400);
+    if (body.action === "announce" && !String(body.text || "").trim()) return json({ error: "Пустое сообщение" }, 400);
+    const res = await env.ROOMS.get(env.ROOMS.idFromName(id)).siteAdmin(body.action, body.text);
+    if (body.action === "close") await env.REGISTRY.get(env.REGISTRY.idFromName("all")).remove(id);
+    return json(res);
+  }
   if (p === "/api/admin/rooms") {
     const reg = env.REGISTRY.get(env.REGISTRY.idFromName("all"));
     return json(url.searchParams.get("refresh") ? await reg.refreshAll() : await reg.list());

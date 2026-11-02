@@ -410,6 +410,7 @@ class Room:
             "playing": self.playing, "position": self.position, "updated": self.updated * 1000,
             "everyone": self.everyone, "created": self.created * 1000, "lastActive": self.last_active * 1000,
             "seen": self.last_active * 1000,
+            "activeSince": self.active_since and self.active_since * 1000,
         }
 
     def broadcast_users(self):
@@ -436,14 +437,34 @@ def get_room(rid):
 
 # «комнато-часы» за сутки (по UTC, как лимит Cloudflare) — для панели администратора
 FREE_ROOM_HOURS = 28
-usage = {"day": 0, "sec": 0.0}
+usage = {"day": 0, "sec": 0.0, "peak": 0, "rooms": set(), "films": 0}
+days = []    # итоги прошлых суток
+films = {}   # что включали: id -> {"title", "source", "n", "last"}
 
 
 def day_start(now):
+    """Под rooms_lock. Итоги прошедших суток уходят в историю."""
     day = int(now // 86400)
     if usage["day"] != day:
-        usage.update(day=day, sec=0.0)
+        if usage["day"]:
+            days.append({"day": usage["day"], "hours": usage["sec"] / 3600, "peak": usage["peak"],
+                         "rooms": len(usage["rooms"]), "films": usage["films"]})
+            del days[:-30]
+        usage.update(day=day, sec=0.0, peak=0, rooms=set(), films=0)
     return day * 86400
+
+
+def track_film(movie):
+    """Вызывается при включении фильма — для «популярных фильмов» в панели."""
+    with rooms_lock:
+        day_start(time.time())
+        usage["films"] += 1
+        f = films.get(movie["id"], {"n": 0})
+        films[movie["id"]] = {"title": movie["title"], "source": movie.get("source") or "archive",
+                              "n": f["n"] + 1, "last": time.time() * 1000}
+        if len(films) > 200:
+            for k in sorted(films, key=lambda k: films[k]["last"])[:len(films) - 200]:
+                del films[k]
 
 
 def track_usage(room):
@@ -456,6 +477,10 @@ def track_usage(room):
         elif not room.clients and room.active_since is not None:
             usage["sec"] += now - max(room.active_since, start)
             room.active_since = None
+        # статистика дня: сколько комнат было и пик зрителей
+        if room.clients and len(usage["rooms"]) < 1000:
+            usage["rooms"].add(room.id)
+        usage["peak"] = max(usage["peak"], sum(len(r.clients) for r in rooms.values()))
 
 
 def rooms_overview():
@@ -464,6 +489,10 @@ def rooms_overview():
         start = day_start(now)
         sec = usage["sec"] + sum(now - max(r.active_since, start) for r in rooms.values() if r.active_since)
         all_rooms = list(rooms.values())
+        today = {"day": usage["day"], "hours": sec / 3600, "peak": usage["peak"],
+                 "rooms": len(usage["rooms"]), "films": usage["films"]}
+        top = sorted(({"id": k, **f} for k, f in films.items()), key=lambda f: (-f["n"], -f["last"]))[:8]
+        history = days[-13:] + [today]
     out = []
     for r in all_rooms:
         with r.lock:
@@ -471,7 +500,29 @@ def rooms_overview():
                 out.append(r.snapshot())
     out.sort(key=lambda r: (-len(r["users"]), -r["seen"]))
     return {"now": now * 1000, "rooms": out,
-            "usage": {"roomHours": sec / 3600, "limitHours": FREE_ROOM_HOURS}}
+            "usage": {"roomHours": sec / 3600, "limitHours": FREE_ROOM_HOURS},
+            "today": today, "days": history, "top": top}
+
+
+def site_admin(rid, action, text):
+    """Команды из панели администратора сайта: объявление в комнату или закрыть её."""
+    with rooms_lock:
+        room = rooms.get(rid)
+    if not room:
+        return {"error": "Комната не найдена"}
+    with room.lock:
+        if action == "announce":
+            room.broadcast({"type": "announce", "text": str(text or "").strip()[:300]})
+            return {"ok": True}
+        # всех вежливо выпроваживаем и забываем комнату целиком
+        room.broadcast({"type": "closed"})
+        room.clients.clear()
+        room.presence.clear()
+    with rooms_lock:
+        if room.active_since:
+            usage["sec"] += time.time() - max(room.active_since, day_start(time.time()))
+        rooms.pop(rid, None)
+    return {"ok": True}
 
 
 def join_room(room, cid, name):
@@ -539,6 +590,7 @@ def room_action(room, body):
             room.playing = False
             room.position = 0.0
             room.break_until = None
+            track_film(room.movie)
             # предложение выполнено, а фильм попадает в историю комнаты
             mid = room.movie["id"]
             room.proposals = [p for p in room.proposals if p["id"] != mid]
@@ -786,6 +838,15 @@ class Handler(BaseHTTPRequestHandler):
             exp = int(time.time()) + ADMIN_TTL
             return self.send_cookie_json({"ok": True}, f"kv_admin={admin_token(exp)}; Path=/; HttpOnly; "
                                                        f"SameSite=Strict; Max-Age={ADMIN_TTL}")
+        if p == "/api/admin/room":
+            if not admin_session(self.headers.get("Cookie")):
+                return self.send_json({"error": "auth"}, 401)
+            rid, action = str(body.get("id", "")), body.get("action")
+            if not re.match(r"^[\w-]{1,64}$", rid) or action not in ("announce", "close"):
+                return self.send_json({"error": "bad request"}, 400)
+            if action == "announce" and not str(body.get("text", "")).strip():
+                return self.send_json({"error": "Пустое сообщение"}, 400)
+            return self.send_json(site_admin(rid, action, body.get("text")))
         if p == "/api/admin/logout":
             return self.send_cookie_json({"ok": True}, "kv_admin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
         self.send_error(404)

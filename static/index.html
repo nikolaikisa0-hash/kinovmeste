@@ -310,6 +310,7 @@
   .breakopts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 22px 22px; }
   .breakopts .btn { flex-direction: column; gap: 4px; padding: 16px 8px; font-size: 26px; }
   .breakopts .btn small { font-size: 13px; }
+  .msg.sys.announce span { color: #fde68a; background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.35); font-weight: 700; font-size: 13px; }
   .hist { display: flex; flex-direction: column; gap: 4px; }
   .hrow { display: flex; align-items: center; gap: 8px; font-size: 14px; }
   .hrow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1481,7 +1482,9 @@ async function renderRoom(roomId) {
   let es, ws, wasLost = false, useSse = !("WebSocket" in window), lastMsgAt = 0;
   const params = () => new URLSearchParams({ client: CLIENT, name, admin: adminKey || "" });
   const opened = () => { if (wasLost) { addSys("Соединение восстановлено ✓"); wasLost = false; } };
+  let closedBySite = false;  // комнату закрыл администратор сайта — переподключаться не нужно
   function lost() {
+    if (closedBySite) return;
     if (!wasLost) addSys("Соединение потеряно, переподключаемся…");
     wasLost = true;
     setTimeout(connect, 2000);
@@ -1493,6 +1496,7 @@ async function renderRoom(roomId) {
     ws.onopen = () => { ok = true; lastMsgAt = Date.now(); opened(); };
     ws.onmessage = e => { lastMsgAt = Date.now(); if (e.data !== "pong") onMsg(JSON.parse(e.data)); };
     ws.onclose = e => {
+      if (closedBySite || e.code === 4002) return;
       if (!ok && !wasLost) { useSse = true; return connect(); }  // сервер не умеет WebSocket
       if (e.code === 4000) { CLIENT = newClientId(); return connect(); }  // этот id заняла другая вкладка
       lost();
@@ -1522,6 +1526,22 @@ async function renderRoom(roomId) {
       proposals = m.proposals || []; roomHistory = m.history || [];
       renderProps();
       if ($("#settingsModal").classList.contains("open")) renderSettings();
+    }
+    else if (m.type === "announce") {
+      // объявление от администратора сайта
+      addSys("📢 Администратор сайта: " + m.text);
+      $("#msgs").lastElementChild?.classList.add("announce");
+      toast("📢 " + m.text);
+      ping("mention");
+    }
+    else if (m.type === "closed") {
+      closedBySite = true;
+      ws?.close(); es?.close();
+      recent.remove(roomId);
+      player?.destroy(); player = null;
+      $("#player").innerHTML = `<div class="empty"><div class="big">🚪</div><h2>Комната закрыта</h2>
+        <p class="muted">Администратор сайта закрыл эту комнату</p><a class="btn" href="/">На главную</a></div>`;
+      addSys("Комнату закрыл администратор сайта");
     }
     else if (m.type === "typing") {
       if (m.client !== CLIENT && m.name !== name) { typers.set(m.name, Date.now() + 4000); renderTyping(); }

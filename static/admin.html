@@ -34,6 +34,8 @@
   .btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
   .btn.ghost { background: var(--panel2); border: 1px solid var(--line); }
   .btn.small { padding: 7px 12px; font-size: 14px; border-radius: 10px; }
+  .btn.danger { background: rgba(255,77,90,.12); border: 1px solid rgba(255,77,90,.4); color: #fca5a5; }
+  .btn.on { background: var(--violet); border-color: var(--violet); }
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
   h1 { font: 800 26px/1.2 "Unbounded", sans-serif; margin: 0 0 6px; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 30px 0 12px; }
@@ -41,51 +43,96 @@
   .login { max-width: 420px; margin: 10vh auto 0; text-align: center; }
   .login .big { font-size: 52px; }
   .login form { display: flex; gap: 8px; margin-top: 18px; }
-  .login input { flex: 1; min-width: 0; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; outline: none; }
-  .login input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(255,77,90,.15); }
+  .field { flex: 1; min-width: 0; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; outline: none; }
+  .field:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(255,77,90,.15); }
   .err { color: #fca5a5; min-height: 1.5em; margin-top: 10px; font-weight: 600; }
   ol.steps { text-align: left; color: #cfcde0; padding-left: 22px; line-height: 1.8; }
   code { background: var(--panel3); padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+  .top { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .tools .field { max-width: 380px; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-top: 18px; align-items: start; }
   .tile .num { font: 800 34px/1.1 "Unbounded", sans-serif; }
   .tile .lbl { color: var(--muted); font-size: 13px; font-weight: 600; }
+  .tile .extra { font-size: 13px; color: var(--dim); margin-top: 6px; }
   .bar { height: 8px; border-radius: 99px; background: var(--panel3); overflow: hidden; margin-top: 10px; }
   .bar i { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width .5s; }
   .bar.mid i { background: var(--warn); } .bar.high i { background: var(--accent); }
   .hint { font-size: 12px; color: var(--dim); margin-top: 8px; }
+  .duo { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; margin-top: 14px; }
+  .card h3 { margin: 0 0 14px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  /* график по дням */
+  .chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; }
+  .col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+  .col i { display: block; width: 100%; max-width: 34px; border-radius: 7px 7px 3px 3px; background: linear-gradient(180deg, var(--accent2), var(--accent));
+    min-height: 3px; opacity: .85; transition: height .5s, opacity .2s; }
+  .col.today i { background: linear-gradient(180deg, #c4b5fd, var(--violet)); opacity: 1; }
+  .col:hover i { opacity: 1; }
+  .col small { font-size: 11px; color: var(--dim); white-space: nowrap; }
+  .col b { font-size: 11px; color: var(--muted); font-weight: 700; }
+  .films { display: flex; flex-direction: column; gap: 8px; }
+  .film { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .film .n { flex: none; min-width: 34px; text-align: center; font-weight: 800; color: var(--accent2); }
+  .film span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .film small { flex: none; color: var(--dim); }
   .rooms { display: grid; gap: 12px; }
   .room { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px; align-items: center; }
   .room .title { font-weight: 800; font-size: 16px; overflow-wrap: anywhere; }
   .room .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .room .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .ann { grid-column: 1 / -1; display: none; gap: 8px; }
+  .ann.open { display: flex; }
   .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
     background: var(--panel2); border: 1px solid var(--line); }
   .pill.play { background: rgba(52,211,153,.14); border-color: rgba(52,211,153,.35); color: #6ee7b7; }
   .pill.pause { background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.3); color: #fcd34d; }
+  .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(52,211,153,.6);
+    animation: pulse 2s infinite; margin-right: 10px; vertical-align: middle; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 8px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
   .people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .person { padding: 3px 10px; border-radius: 999px; background: var(--panel2); font-size: 13px; font-weight: 600; }
   .empty { text-align: center; color: var(--muted); padding: 30px; }
   .idle { opacity: .7; }
   .upd { font-size: 12px; color: var(--dim); }
-  @media (max-width: 640px) {
+  .toast { position: fixed; bottom: 24px; left: 50%; z-index: 60; transform: translate(-50%, 30px); opacity: 0; pointer-events: none;
+    background: rgba(29,29,42,.95); border: 1px solid var(--line); padding: 12px 20px; border-radius: 14px; font-weight: 600;
+    transition: all .3s; max-width: calc(100vw - 32px); text-align: center; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  @media (max-width: 760px) {
     header { padding: 10px 16px; }
-    .logo span:last-child { display: none; }
+    .logo span:last-child, .hsub { display: none; }
     .room { grid-template-columns: 1fr; }
+    .room .acts { justify-content: flex-start; }
+    .duo { grid-template-columns: 1fr; }
+    .col small { font-size: 9px; }
+    .tiles { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .tile.wide { grid-column: 1 / -1; }
+    .tile .num { font-size: 26px; }
+    .card { padding: 14px; }
   }
 </style>
 </head>
 <body>
 <header>
   <a class="logo" href="/"><span class="mark">🍿</span><span>Кино<b>Вместе</b></span></a>
-  <span class="muted">Панель администратора</span>
+  <span class="muted hsub">Панель администратора</span>
   <span class="grow"></span>
-  <span id="hact"></span>
+  <span id="hact" style="display:flex;gap:8px"></span>
 </header>
 <main id="app"><div class="empty">Загрузка…</div></main>
+<div class="toast" id="toast"></div>
 
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const SOURCES = { archive: "🎞 Internet Archive", youtube: "▶ YouTube", vk: "VK Видео", rutube: "Rutube" };
+const SOURCES = { archive: "Internet Archive", youtube: "YouTube", vk: "VK Видео", rutube: "Rutube" };
+const store = {
+  get: (k, d = "") => { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2600); }
 
 function clock(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
@@ -99,11 +146,16 @@ function ago(ms) {
   if (s < 86400) return Math.floor(s / 3600) + " ч назад";
   return new Date(ms).toLocaleString("ru", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
+function span(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  return m < 60 ? m + " мин" : Math.floor(m / 60) + " ч " + (m % 60) + " мин";
+}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
   return { status: r.status, data: await r.json().catch(() => ({})) };
 }
+const postJson = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 async function start() {
   const { data } = await api("/api/admin/status");
@@ -129,31 +181,46 @@ function showLogin() {
   $("#hact").innerHTML = "";
   $("#app").innerHTML = `<div class="card login"><div class="big">🛠</div><h1>Вход для администратора</h1>
     <div class="muted">Здесь видно, какие комнаты сейчас открыты</div>
-    <form id="lf"><input type="password" id="pw" placeholder="Пароль" autocomplete="current-password" required>
+    <form id="lf"><input class="field" type="password" id="pw" placeholder="Пароль" autocomplete="current-password" required>
       <button class="btn">Войти</button></form><div class="err" id="err"></div></div>`;
   $("#pw").focus();
   $("#lf").onsubmit = async e => {
     e.preventDefault();
     $("#err").textContent = "";
-    const { status, data } = await api("/api/admin/login", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) });
+    const { status, data } = await postJson("/api/admin/login", { password: $("#pw").value });
     if (status === 200 && data.ok) return showDashboard();
     $("#err").textContent = data.error || "Не получилось войти";
     $("#pw").select();
   };
 }
 
-let timer = null, ticker = null, last = null, loadedAt = 0;
+let timer = null, ticker = null, last = null, loadedAt = 0, query = "", viewersBefore = null;
+let soundOn = store.get("kv_admin_sound") === "1";
+const openAnn = new Set();  // у каких комнат открыта строка объявления — переживает автообновление
 
 async function showDashboard() {
   $("#hact").innerHTML = `<button class="btn ghost small" id="chk" title="Спросить каждую комнату напрямую">🔄 Проверить</button>
     <button class="btn ghost small" id="out">Выйти</button>`;
   $("#out").onclick = async () => { clearInterval(timer); await api("/api/admin/logout", { method: "POST" }); showLogin(); };
-  $("#chk").onclick = () => load(true);
-  $("#app").innerHTML = `<h1>Комнаты</h1><div class="upd" id="upd"></div><div id="dash"></div>`;
+  $("#chk").onclick = () => load(true).then(() => toast("Все комнаты проверены"));
+  $("#app").innerHTML = `
+    <div class="top"><div class="grow"><h1>Комнаты</h1><div class="upd" id="upd"></div></div></div>
+    <div class="tools">
+      <input class="field" id="q" type="search" placeholder="Поиск: комната, фильм или имя зрителя" value="${esc(query)}">
+      <button class="btn ghost small${soundOn ? " on" : ""}" id="snd" title="Тихий сигнал, когда кто-то заходит">${soundOn ? "🔔 Сигнал включён" : "🔕 Сигнал о зрителях"}</button>
+    </div>
+    <div id="dash"></div>`;
+  $("#q").oninput = e => { query = e.target.value.trim().toLowerCase(); render(); };
+  $("#snd").onclick = () => {
+    soundOn = !soundOn;
+    store.set("kv_admin_sound", soundOn ? "1" : "0");
+    $("#snd").classList.toggle("on", soundOn);
+    $("#snd").textContent = soundOn ? "🔔 Сигнал включён" : "🔕 Сигнал о зрителях";
+    if (soundOn) ping();
+  };
   await load(true);  // при открытии сверяемся с самими комнатами, дальше — только реестр
   clearInterval(timer);
-  timer = setInterval(() => { if (!document.hidden) load(false); }, 5000);
+  timer = setInterval(() => { if (!document.hidden || soundOn) load(false); }, 5000);
   ticker ??= setInterval(tick, 1000);
 }
 
@@ -164,54 +231,157 @@ async function load(refresh) {
   if (data.error) { $("#upd").textContent = "Ошибка: " + data.error; return; }
   // часы сервера и браузера могут расходиться — считаем от времени сервера
   last = data; loadedAt = Date.now();
+  const viewers = data.rooms.reduce((n, r) => n + r.users.length, 0);
+  if (soundOn && viewersBefore != null && viewers > viewersBefore) ping();
+  viewersBefore = viewers;
+  document.title = (viewers ? `(${viewers}) ` : "") + "Панель · КиноВместе";
   render();
+}
+
+// тихий сигнал о новых зрителях
+let actx;
+function ping() {
+  try {
+    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    for (const [f, d] of [[523, 0], [784, .12]]) {
+      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + d;
+      o.frequency.setValueAtTime(f, t);
+      g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .4);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + .42);
+    }
+  } catch {}
 }
 
 const serverNow = () => last.now + (Date.now() - loadedAt);
 const posOf = r => r.position + (r.playing ? (serverNow() - r.updated) / 1000 : 0);
+const matches = r => !query || [r.id, r.movie?.title, r.admin, ...r.users].some(v => String(v || "").toLowerCase().includes(query));
+
+function chart() {
+  const days = last.days || [];
+  if (!days.length) return "";
+  const max = Math.max(1, ...days.map(d => d.hours));
+  const fmt = new Intl.DateTimeFormat("ru", { day: "numeric", month: "short", timeZone: "UTC" });
+  const wd = new Intl.DateTimeFormat("ru", { weekday: "short", timeZone: "UTC" });
+  return `<div class="chart">${days.map((d, i) => {
+    const today = i === days.length - 1, date = new Date(d.day * 86400000);
+    return `<div class="col${today ? " today" : ""}" title="${fmt.format(date)}: ${d.hours.toFixed(1)} комнато-ч, комнат ${d.rooms}, пик ${d.peak} зрит., фильмов ${d.films}">
+      <b>${d.hours >= 0.05 ? d.hours.toFixed(1) : ""}</b><i style="height:${Math.max(2, d.hours / max * 100)}%"></i>
+      <small>${today ? "сегодня" : wd.format(date)}</small></div>`;
+  }).join("")}</div>
+  <div class="hint">Столбик — сколько часов в комнатах кто-то был. Нажмите на столбик, чтобы увидеть подробности.</div>`;
+}
+
+function topFilms() {
+  const top = last.top || [];
+  if (!top.length) return `<div class="muted">Пока ничего не включали</div>`;
+  return `<div class="films">${top.map(f => `<div class="film"><span class="n">×${f.n}</span>
+    <span title="${esc(f.title)}">${esc(f.title)}</span><small>${esc(SOURCES[f.source] || f.source || "")}</small></div>`).join("")}</div>`;
+}
 
 function render() {
+  // черновики объявлений и фокус не должны теряться при автообновлении
+  const drafts = {};
+  document.querySelectorAll(".ann input").forEach(i => { drafts[i.dataset.id] = i.value; });
+  const focused = document.activeElement?.closest?.(".ann")?.dataset.id;
+
   const active = last.rooms.filter(r => r.users.length), idle = last.rooms.filter(r => !r.users.length);
   const people = active.reduce((n, r) => n + r.users.length, 0);
-  const u = last.usage, pct = Math.min(100, u.roomHours / u.limitHours * 100);
+  const u = last.usage, t = last.today || {}, pct = Math.min(100, u.roomHours / u.limitHours * 100);
+  const shownActive = active.filter(matches), shownIdle = idle.filter(matches);
   $("#dash").innerHTML = `
     <div class="tiles">
-      <div class="card tile"><div class="num">${active.length}</div><div class="lbl">комнат открыто сейчас</div></div>
-      <div class="card tile"><div class="num">${people}</div><div class="lbl">зрителей онлайн</div></div>
-      <div class="card tile"><div class="num">${u.roomHours.toFixed(1)} <span class="muted" style="font-size:16px">/ ~${u.limitHours} ч</span></div>
+      <div class="card tile"><div class="num">${active.length ? '<span class="live"></span>' : ""}${active.length}</div>
+        <div class="lbl">комнат открыто сейчас</div><div class="extra">сегодня было: ${t.rooms ?? "—"}</div></div>
+      <div class="card tile"><div class="num">${people}</div><div class="lbl">зрителей онлайн</div>
+        <div class="extra">больше всего сегодня: ${t.peak ?? "—"}</div></div>
+      <div class="card tile"><div class="num">${t.films ?? 0}</div><div class="lbl">раз включали фильмы сегодня</div></div>
+      <div class="card tile wide"><div class="num">${u.roomHours.toFixed(1)} <span class="muted" style="font-size:16px">/ ~${u.limitHours} ч</span></div>
         <div class="lbl">комнато-часов сегодня</div>
         <div class="bar ${pct > 80 ? "high" : pct > 50 ? "mid" : ""}"><i style="width:${pct}%"></i></div>
-        <div class="hint">Сколько часов сегодня в комнатах кто-то был (сутки — по UTC, с 03:00 мск).
-          Бесплатный Cloudflare даёт около ${u.limitHours} часов работы комнат в сутки. Комнаты «спят» между событиями,
-          поэтому реальный расход обычно заметно меньше этой оценки.</div></div>
+        <div class="hint">Сутки считаются по UTC (с 03:00 мск). Бесплатный Cloudflare даёт около ${u.limitHours} часов работы
+          комнат в сутки; комнаты «спят» между событиями, поэтому реальный расход обычно меньше.</div></div>
+    </div>
+    <div class="duo">
+      <div class="card"><h3>Последние дни</h3>${chart()}</div>
+      <div class="card"><h3>Популярные фильмы</h3>${topFilms()}</div>
     </div>
     <h2>Сейчас смотрят · ${active.length}</h2>
-    <div class="rooms">${active.length ? active.map(roomCard).join("") : `<div class="card empty">Пока никого нет 🍿</div>`}</div>
-    ${idle.length ? `<h2>Недавно были · ${idle.length}</h2><div class="rooms">${idle.slice(0, 30).map(roomCard).join("")}</div>` : ""}`;
+    <div class="rooms">${shownActive.length ? shownActive.map(roomCard).join("")
+      : `<div class="card empty">${query && active.length ? "Ничего не нашлось" : "Пока никого нет 🍿"}</div>`}</div>
+    ${shownIdle.length ? `<h2>Недавно были · ${idle.length}</h2><div class="rooms">${shownIdle.slice(0, 30).map(roomCard).join("")}</div>` : ""}`;
+
+  document.querySelectorAll(".ann input").forEach(i => { if (drafts[i.dataset.id]) i.value = drafts[i.dataset.id]; });
+  const fi = focused && $(`.ann[data-id="${CSS.escape(focused)}"] input`);
+  if (fi) { fi.focus(); fi.setSelectionRange(fi.value.length, fi.value.length); }
   tick();
 }
 
 function roomCard(r) {
-  const on = r.users.length > 0, m = r.movie;
-  const status = !m ? `<span class="pill">🎬 фильм не выбран</span>`
+  const on = r.users.length > 0, m = r.movie, id = esc(r.id);
+  const status = !m ? `<span class="pill">фильм не выбран</span>`
     : `<span class="pill ${r.playing && on ? "play" : "pause"}">${r.playing && on ? "▶ идёт" : "⏸ пауза"}
-       · <span class="pos" data-id="${esc(r.id)}">${clock(posOf(r))}</span></span>`;
+       · <span class="pos" data-id="${id}">${clock(posOf(r))}</span></span>`;
   return `<div class="card room${on ? "" : " idle"}">
     <div>
       <div class="title">${m ? esc(m.title) : "Без фильма"} ${m ? `<span class="pill">${esc(SOURCES[m.source] || m.source)}</span>` : ""}</div>
       <div class="meta">${status}
-        <span>🚪 <code>${esc(r.id)}</code></span>
+        <span>комната <code>${id}</code></span>
         <span>👑 ${r.admin ? esc(r.admin) : on ? "админа нет в комнате" : "—"}</span>
         ${r.everyone === false ? "<span>🔒 управляет только админ</span>" : ""}
+        ${on && r.activeSince ? `<span>смотрят уже ${span(serverNow() - r.activeSince)}</span>` : ""}
         <span>создана ${ago(r.created)}</span>
         <span>активность ${ago(r.lastActive)}</span></div>
       ${on ? `<div class="people">${r.users.map(n => `<span class="person">${n === r.admin ? "👑 " : ""}${esc(n)}</span>`).join("")}</div>` : ""}
     </div>
-    <a class="btn small${on ? "" : " ghost"}" href="/room/${encodeURIComponent(r.id)}" target="_blank" rel="noopener">Зайти в комнату →</a>
+    <div class="acts">
+      <a class="btn small${on ? "" : " ghost"}" href="/room/${encodeURIComponent(r.id)}" target="_blank" rel="noopener">Зайти →</a>
+      <button class="btn ghost small" data-act="copy" data-id="${id}" title="Скопировать ссылку-приглашение">🔗</button>
+      ${on ? `<button class="btn ghost small" data-act="ann" data-id="${id}" title="Написать всем в комнате">📢 Сообщение</button>` : ""}
+      <button class="btn danger small" data-act="close" data-id="${id}" title="Выгнать всех и удалить комнату">Закрыть</button>
+    </div>
+    ${on ? `<form class="ann${openAnn.has(r.id) ? " open" : ""}" data-id="${id}">
+      <input class="field" data-id="${id}" maxlength="300" placeholder="Сообщение всем в комнате — увидят в чате от «Администратора сайта»">
+      <button class="btn small">Отправить</button></form>` : ""}
   </div>`;
 }
 
-// позиция фильма тикает каждую секунду без запросов к серверу
+// кнопки на карточках комнат (одна подписка на всю страницу — переживает перерисовку)
+document.addEventListener("click", async e => {
+  const col = e.target.closest(".col");
+  if (col) return toast(col.title);
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const id = b.dataset.id;
+  if (b.dataset.act === "copy") {
+    const url = location.origin + "/room/" + id;
+    navigator.clipboard?.writeText(url).then(() => toast("Ссылка скопирована"), () => prompt("Ссылка:", url));
+  } else if (b.dataset.act === "ann") {
+    openAnn.has(id) ? openAnn.delete(id) : openAnn.add(id);
+    render();
+    if (openAnn.has(id)) $(`.ann[data-id="${CSS.escape(id)}"] input`)?.focus();
+  } else if (b.dataset.act === "close") {
+    if (!confirm(`Закрыть комнату ${id}? Все зрители выйдут, чат и история комнаты удалятся.`)) return;
+    const { data } = await postJson("/api/admin/room", { id, action: "close" });
+    toast(data.ok ? "Комната закрыта" : "Не получилось: " + (data.error || "ошибка"));
+    load(false);
+  }
+});
+document.addEventListener("submit", async e => {
+  const f = e.target.closest(".ann");
+  if (!f) return;
+  e.preventDefault();
+  const input = f.querySelector("input"), text = input.value.trim();
+  if (!text) return;
+  const { data } = await postJson("/api/admin/room", { id: f.dataset.id, action: "announce", text });
+  if (!data.ok) return toast("Не получилось: " + (data.error || "ошибка"));
+  input.value = "";
+  openAnn.delete(f.dataset.id);
+  render();
+  toast("Сообщение отправлено в комнату");
+});
+
+// позиция фильма и «смотрят уже» тикают без запросов к серверу
 function tick() {
   if (!last) return;
   for (const el of document.querySelectorAll(".pos")) {
