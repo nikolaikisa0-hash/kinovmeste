@@ -284,7 +284,8 @@ const enc = new TextEncoder();
 
 class Forbidden extends Error {}
 
-const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync"]);
+const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break"]);
+const MOVIE_ID = /^[\w.:-]{1,160}$/;
 const LEAVE_GRACE = 20_000;   // столько ждём переподключения, прежде чем написать «вышел»
 const PING_TIMEOUT = 150_000; // клиент шлёт ping раз в 25 с; дольше тишины — соединение мёртвое
 const WS_OPEN = 1;
@@ -293,7 +294,7 @@ export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.env = env;
-    this.clients = new Map();  // запасной канал SSE: client_id -> { name, writer, admin }
+    this.clients = new Map();  // запасной канал SSE: client_id -> { name, writer, admin, lag }
     this.roomId = null;
     this.movie = null;
     this.playing = false;
@@ -306,6 +307,9 @@ export class Room extends DurableObject {
     this.adminKey = null;  // секрет создателя комнаты
     this.everyone = true;  // могут ли все управлять просмотром
     this.presence = {};    // client_id -> { name, leftAt } — чтобы переподключение не писало «вышел/зашёл»
+    this.proposals = [];   // фильмы, предложенные комнате: { id, title, by, votes: [имена] }
+    this.history = [];     // что уже смотрели вместе
+    this.breakUntil = null;  // «перерыв на 5 минут»: до какого времени
     this.timer = null;
     // на ping отвечает сам Cloudflare, не будя комнату: между событиями она «спит» и не тратит лимит
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -322,6 +326,7 @@ export class Room extends DurableObject {
       roomId: this.roomId, movie: this.movie, playing: this.playing, position: this.position,
       updated: this.updated, created: this.created, lastActive: this.lastActive, emptySince: this.emptySince,
       chat: this.chat, adminKey: this.adminKey, everyone: this.everyone,
+      proposals: this.proposals, history: this.history, breakUntil: this.breakUntil,
     });
   }
 
@@ -344,7 +349,7 @@ export class Room extends DurableObject {
   // все, кто сейчас на связи: через WebSocket и через запасной SSE
   live() {
     return [...this.sockets().map(ws => ws.deserializeAttachment()),
-            ...[...this.clients].map(([cid, c]) => ({ cid, name: c.name, admin: c.admin }))];
+            ...[...this.clients].map(([cid, c]) => ({ cid, name: c.name, admin: c.admin, lag: c.lag }))];
   }
 
   users() {
@@ -355,10 +360,26 @@ export class Room extends DurableObject {
     return this.live().find(c => c.admin)?.name ?? null;
   }
 
+  // кто сильно отстаёт от комнаты (медленный интернет): имя -> секунды
+  lags() {
+    return Object.fromEntries(this.live().filter(c => c.lag > 0).map(c => [c.name, c.lag]));
+  }
+
+  // сколько секунд осталось до конца перерыва (часы у всех разные — шлём остаток, а не время)
+  breakLeft() {
+    if (!this.breakUntil || this.playing) return null;
+    const left = (this.breakUntil - Date.now()) / 1000;
+    return left > -3600 ? left : null;
+  }
+
   state() {
     return { type: "state", movie: this.movie, playing: this.playing,
              position: this.currentPosition(), users: this.users(), everyone: this.everyone,
-             admin: this.adminName() };
+             admin: this.adminName(), lags: this.lags(), breakLeft: this.breakLeft() };
+  }
+
+  extras() {
+    return { type: "extras", proposals: this.proposals, history: this.history };
   }
 
   // сводка для панели администратора сайта
@@ -397,7 +418,7 @@ export class Room extends DurableObject {
   }
 
   broadcastUsers() {
-    this.broadcast({ type: "users", users: this.users(), admin: this.adminName() });
+    this.broadcast({ type: "users", users: this.users(), admin: this.adminName(), lags: this.lags() });
   }
 
   // закрывает старое соединение того же клиента (обновил страницу — пришёл новым)
@@ -436,6 +457,7 @@ export class Room extends DurableObject {
   greet(send, admin) {
     send({ type: "you", admin });
     send(this.state());
+    send(this.extras());
     for (const m of this.chat.slice(-30)) send(m);
   }
 
@@ -599,10 +621,17 @@ export class Room extends DurableObject {
         .map(k => [k, info[k] ?? null]));
       this.playing = false;
       this.position = 0;
+      this.breakUntil = null;
+      // предложение выполнено, а фильм попадает в историю комнаты
+      this.proposals = this.proposals.filter(p => p.id !== this.movie.id);
+      this.history = [{ id: this.movie.id, title: this.movie.title, source: this.movie.source || "archive",
+                        by: name, at: Date.now() }, ...this.history.filter(h => h.id !== this.movie.id)].slice(0, 20);
+      this.broadcast(this.extras());
       sysMsg = `${name} включил(а) «${this.movie.title}»`;
     } else if (t === "play") {
       this.position = this.positionFrom(body);
       this.playing = true;
+      this.breakUntil = null;
       sysMsg = `${name}: ▶ пуск`;
     } else if (t === "pause") {
       this.position = this.positionFrom(body);
@@ -624,6 +653,46 @@ export class Room extends DurableObject {
       this.playing = false;
       this.broadcast({ type: "countdown", name });
       sysMsg = `${name} запустил(а) обратный отсчёт ⏱`;
+    } else if (t === "break") {
+      // перерыв: пауза у всех и общий таймер
+      const min = Math.min(30, Math.max(1, Math.round(Number(body.minutes) || 5)));
+      this.position = this.positionFrom(body);
+      this.playing = false;
+      this.breakUntil = Date.now() + min * 60_000;
+      sysMsg = `☕ ${name} объявил(а) перерыв на ${min} мин`;
+    } else if (t === "typing") {
+      this.broadcast({ type: "typing", name, client: body.client });
+      return;
+    } else if (t === "lag") {
+      // клиент сообщает, только когда начал или перестал отставать — это редкое событие
+      const lag = Math.min(36000, Math.max(0, Math.round(Number(body.lag) || 0)));
+      for (const ws of this.sockets()) {
+        const a = ws.deserializeAttachment();
+        if (a.cid === body.client) ws.serializeAttachment({ ...a, lag });
+      }
+      const client = this.clients.get(body.client);
+      if (client) client.lag = lag;
+      this.broadcastUsers();
+      return;
+    } else if (t === "propose" || t === "vote" || t === "unpropose") {
+      const id = String(body.id || "");
+      if (!MOVIE_ID.test(id)) return;
+      const p = this.proposals.find(x => x.id === id);
+      if (t === "propose" && !p) {
+        const title = String(body.title || "").trim().slice(0, 120) || "Фильм";
+        this.proposals = [...this.proposals, { id, title, by: name, votes: [name] }].slice(-8);
+        this.broadcast({ type: "system", text: `🗳 ${name} предлагает «${title}»` });
+      } else if (t === "propose" && p) {
+        if (!p.votes.includes(name)) p.votes = [...p.votes, name];
+      } else if (t === "vote" && p) {
+        // голос «за» — повторное нажатие снимает голос
+        p.votes = p.votes.includes(name) ? p.votes.filter(v => v !== name) : [...p.votes, name];
+      } else if (t === "unpropose" && p && (admin || p.by === name)) {
+        this.proposals = this.proposals.filter(x => x !== p);
+      } else return;
+      this.broadcast(this.extras());
+      this.save();
+      return;
     } else if (t === "mode") {
       if (!admin) throw new Forbidden("Переключать режим может только администратор");
       this.position = this.currentPosition();  // время ниже обновится — не теряем позицию

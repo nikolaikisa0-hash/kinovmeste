@@ -276,6 +276,44 @@
   .quick button { flex: none; font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line);
     background: var(--panel); cursor: pointer; color: var(--muted); font-weight: 600; transition: all .2s; }
   .quick button:hover { color: var(--text); border-color: #44445e; }
+  .typing { min-height: 20px; padding: 2px 16px 4px; font-size: 12px; color: var(--muted); font-style: italic; }
+  .typing i { display: inline-block; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  .lag { font-size: 11px; color: #fcd34d; font-weight: 700; }
+  .tc { border: 0; background: rgba(139,92,246,.28); color: #ddd6fe; border-radius: 6px; padding: 0 5px; font: inherit; font-weight: 700; cursor: pointer; }
+  .tc:hover { background: rgba(139,92,246,.5); }
+  .msg.mine .tc { background: rgba(255,255,255,.25); color: #fff; }
+  .floater small:empty { display: none; }
+
+  /* предложения фильмов */
+  .props { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto;
+    border-bottom: 1px solid rgba(255,255,255,.06); }
+  .prop { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 12px; background: var(--panel); animation: rise .3s both; }
+  .prop .pimg { width: 40px; height: 40px; flex: none; border-radius: 8px; background: var(--panel3) center/cover no-repeat; display: grid; place-items: center; }
+  .prop .ptxt { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+  .prop .ptxt small { display: block; color: var(--muted); font-weight: 500; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prop button { flex: none; border: 1px solid var(--line); background: var(--panel2); border-radius: 10px; padding: 5px 8px; cursor: pointer;
+    font-weight: 700; font-size: 12px; transition: transform .15s, background .2s; }
+  .prop button:hover { transform: scale(1.06); }
+  .prop button.on { background: var(--violet); border-color: var(--violet); color: #fff; }
+  .room.fs .prop { background: rgba(255,255,255,.08); }
+
+  /* перерыв */
+  .breakov { position: absolute; inset: 0; z-index: 4; display: none; place-items: center; text-align: center; padding: 16px; border-radius: var(--radius);
+    background: radial-gradient(circle, rgba(24,16,36,.78), rgba(0,0,0,.9)); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .breakov.show { display: grid; animation: fade .3s; }
+  .room.fs .breakov { border-radius: 0; }
+  .breakov .cup { font-size: clamp(40px, 8vw, 64px); animation: bob 2.4s ease-in-out infinite; }
+  .breakov .bt { font: 800 clamp(40px, 9vw, 96px)/1 "Unbounded", sans-serif; background: var(--grad); -webkit-background-clip: text; background-clip: text;
+    color: transparent; margin: 8px 0 6px; font-variant-numeric: tabular-nums; }
+  .breakov .acts { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  .breakopts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 22px 22px; }
+  .breakopts .btn { flex-direction: column; gap: 4px; padding: 16px 8px; font-size: 26px; }
+  .breakopts .btn small { font-size: 13px; }
+  .hist { display: flex; flex-direction: column; gap: 4px; }
+  .hrow { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .hrow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hrow small { flex: none; }
 
   /* ---------- Модалки ---------- */
   .modal { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; padding: 16px;
@@ -391,6 +429,20 @@
   </div>
 </div>
 
+<!-- Перерыв -->
+<div class="modal" id="breakModal">
+  <div class="sheet narrow">
+    <div class="head"><b>☕ Перерыв</b><span class="grow"></span>
+      <button class="x" onclick="closeModal('breakModal')" aria-label="Закрыть">✕</button></div>
+    <div class="muted" style="padding:4px 22px 0">Фильм встанет на паузу у всех, а на экране пойдёт общий таймер</div>
+    <div class="breakopts" id="breakOpts">
+      <button class="btn ghost" data-m="5">🍵<small>5 минут</small></button>
+      <button class="btn ghost" data-m="10">🍕<small>10 минут</small></button>
+      <button class="btn ghost" data-m="15">🚶<small>15 минут</small></button>
+    </div>
+  </div>
+</div>
+
 <!-- Знакомство -->
 <div class="modal" id="nameModal">
   <div class="sheet narrow">
@@ -475,6 +527,13 @@ const newClientId = () => {
   return id;
 };
 let CLIENT = (() => { try { return sessionStorage.getItem("kv_client"); } catch { return null; } })() || newClientId();
+
+// 754 -> «12:34», 4000 -> «1:06:40»
+const clock = sec => {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = sec % 60;
+  return (h ? h + ":" + String(mm).padStart(2, "0") : mm) + ":" + String(ss).padStart(2, "0");
+};
 
 // последние комнаты — чтобы вернуться после случайного выхода
 const recent = {
@@ -723,6 +782,13 @@ async function renderRoom(roomId) {
       <section class="stage">
         <div class="screen">
           <div class="glow"></div>
+          <div class="breakov" id="breakOv"><div>
+            <div class="cup">☕</div>
+            <div class="muted" id="brkLbl">Перерыв</div>
+            <div class="bt" id="brkT">5:00</div>
+            <div class="muted">Фильм стоит на паузе у всех</div>
+            <div class="acts"><button class="btn" id="brkGo">▶ Продолжить</button>
+              <button class="btn ghost" id="brkMore">+5 мин</button></div></div></div>
           <div class="fsnote" id="fsNote"></div>
           <button class="fswrite" id="fsWrite" title="Написать в чат (Enter)">✏️ Написать</button>
           <form class="fsinput" id="fsForm"><input id="fsIn" placeholder="Сообщение… Enter — отправить" maxlength="500" autocomplete="off">
@@ -731,7 +797,9 @@ async function renderRoom(roomId) {
             <div class="big">🎬</div>
             <h2>Фильм ещё не выбран</h2>
             <p class="muted">Выберите фильм — он запустится у всех в комнате</p>
-            <button class="btn" onclick="openPicker()">Выбрать фильм</button></div></div>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+              <button class="btn" onclick="openPicker()">Выбрать фильм</button>
+              <button class="btn ghost" onclick="document.getElementById('copyLink').click()">🔗 Позвать друзей</button></div></div></div>
         </div>
         <div class="toolbar">
           <div class="now"><div class="title" id="nowTitle">Ждём фильм…</div>
@@ -740,6 +808,7 @@ async function renderRoom(roomId) {
           <div class="tools">
             <button class="btn ghost small" id="syncBtn" title="Синхронизироваться с администратором">🔄 <span>Синхр.</span></button>
             <button class="btn ghost icon" id="cdBtn" title="Старт с отсчётом 3-2-1">⏱</button>
+            <button class="btn ghost icon" id="breakBtn" title="Перерыв с таймером (B)">☕</button>
             <button class="btn ghost icon" id="lightsBtn" title="Свет в зале (L)">💡</button>
             <button class="btn ghost icon" id="soundBtn" title="Звук чата (M)">🔔</button>
             <button class="btn ghost icon on" id="chatBtn" title="Показать или скрыть чат (C)">💬</button>
@@ -751,8 +820,12 @@ async function renderRoom(roomId) {
       <aside class="side">
         <h3>В комнате <span class="count" id="ucount">0</span></h3>
         <div class="people" id="users"></div>
+        <div id="propsWrap" style="display:none">
+          <h3>🗳 Предложения <span class="count" id="pcount">0</span></h3>
+          <div class="props" id="props"></div></div>
         <h3>Чат</h3>
         <div class="msgs" id="msgs"></div>
+        <div class="typing" id="typing"></div>
         <div class="quick" id="quick"></div>
         <form class="chatform" id="chatform"><input id="chatin" placeholder="Написать сообщение…" autocomplete="off" maxlength="500">
           <button class="btn" aria-label="Отправить">➤</button></form>
@@ -785,6 +858,8 @@ async function renderRoom(roomId) {
     }, () => r));
 
   let player = null, currentKey = null, applying = false, lastState = null;
+  // во вкладке видно, что идёт: «▶ Фильм · КиноВместе»
+  const roomTitle = () => (lastState?.movie ? `${lastState.playing ? "▶" : "⏸"} ${lastState.movie.title}` : "Комната") + " · КиноВместе";
 
   // ---- чат ----
   let lastAuthor = null, unread = 0;
@@ -799,20 +874,55 @@ async function renderRoom(roomId) {
     const fresh = !m.ts || Date.now() / 1000 - m.ts < 15, mention = !mine && mentionsMe(m.text);
     el.className = "msg" + (mine ? " mine" : "") + (lastAuthor === m.name ? " cont" : "") + (mention ? " mention" : "");
     el.innerHTML = `${avatar(m.name)}<div class="bubble"><div class="who" style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</div>` +
-      `${esc(m.text)}<span class="time">${fmtTime(m.ts)}</span></div>`;
+      `${withTimecodes(esc(m.text))}<span class="time">${fmtTime(m.ts)}</span></div>`;
     lastAuthor = m.name;
+    if (typers.delete(m.name)) renderTyping();
     box.appendChild(el); box.scrollTop = box.scrollHeight;
     if (mine || !fresh) return;
     if (isFs() && roomEl.classList.contains("nochat")) fsNote(m);
     ping(mention ? "mention" : "msg");
-    if (document.hidden) { unread++; document.title = `(${mention ? "@" : unread}) Комната · КиноВместе`; }
+    if (document.hidden) { unread++; document.title = `(${mention ? "@" : unread}) ${roomTitle()}`; }
   }
+  // «12:34» в сообщении превращается в кнопку: перемотать всех на этот момент
+  function withTimecodes(html) {
+    return html.replace(/(^|[^\d:])((?:\d{1,2}:)?[0-5]?\d:[0-5]\d)(?![\d:])/g, (all, pre, tc) => {
+      const sec = tc.split(":").reduce((a, x) => a * 60 + Number(x), 0);
+      return `${pre}<button class="tc" data-t="${sec}" title="Перемотать всех сюда">${tc}</button>`;
+    });
+  }
+  $("#msgs").addEventListener("click", e => {
+    const b = e.target.closest(".tc");
+    if (!b) return;
+    if (!lastState?.movie) return toast("Сначала выберите фильм 🎬");
+    if (!canControl()) return toast("Перематывать сейчас может только администратор 👑");
+    send({ type: "seek", position: Number(b.dataset.t) });
+    toast("⏩ Перематываем всех на " + b.textContent);
+  });
+
+  // «печатает…»: шлём не чаще раза в 3 секунды, у остальных надпись гаснет через 4 секунды
+  const typers = new Map();
+  let typingSentAt = 0;
+  function iAmTyping() {
+    if (Date.now() - typingSentAt < 3000) return;
+    typingSentAt = Date.now();
+    send({ type: "typing" });
+  }
+  function renderTyping() {
+    const now = Date.now();
+    for (const [n, until] of typers) if (until < now) typers.delete(n);
+    const names = [...typers.keys()];
+    $("#typing").innerHTML = !names.length ? "" : esc(names.length > 2
+      ? `${names.slice(0, 2).join(", ")} и ещё ${names.length - 2}` : names.join(" и ")) +
+      (names.length > 1 ? " печатают" : " печатает") + "<i>…</i>";
+  }
+  setInterval(renderTyping, 1000);
+
   function addSys(text) {
     const box = $("#msgs"), el = document.createElement("div");
     el.className = "msg sys"; el.innerHTML = `<span>${esc(text)}</span>`;
     lastAuthor = null; box.appendChild(el); box.scrollTop = box.scrollHeight;
   }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { unread = 0; document.title = "Комната · КиноВместе"; } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { unread = 0; document.title = roomTitle(); } });
 
   // упомянули меня: «@Имя» или просто имя отдельным словом
   function mentionsMe(text) {
@@ -892,12 +1002,46 @@ async function renderRoom(roomId) {
     inp.focus();
   };
   function renderUsers() {
-    const admin = lastState?.admin;
-    $("#users").innerHTML = users.map(u => `<span class="person" title="${esc(u)}">${avatar(u, u === admin)}${esc(u)}${u === name ? ' <span class="muted">(вы)</span>' : ""}</span>`).join("");
+    const admin = lastState?.admin, lags = lastState?.lags || {};
+    // 🐢 — у человека фильм заметно отстал, ⏳ — ещё грузится или не запущен
+    const lagTag = u => !lags[u] ? "" : `<span class="lag" title="${lags[u] >= 5 ? "Отстаёт от комнаты" : "Видео ещё грузится"}">` +
+      `${lags[u] >= 5 ? "🐢 −" + clock(lags[u]) : "⏳"}</span>`;
+    $("#users").innerHTML = users.map(u => `<span class="person" title="${esc(u)}">${avatar(u, u === admin)}${esc(u)}${u === name ? ' <span class="muted">(вы)</span>' : ""}${lagTag(u)}</span>`).join("");
+    renderProps();
     $("#ucount").textContent = users.length;
     const locked = lastState?.everyone === false;
     $("#lockPill").innerHTML = locked ? `<span class="pill">🔒 Управляет 👑 ${esc(admin || "админ")}</span>` : "";
     if ($("#settingsModal").classList.contains("open")) renderSettings();
+  }
+
+  // ---- 🗳 предложения фильмов и история комнаты ----
+  let proposals = [], roomHistory = [];
+  function renderProps() {
+    $("#propsWrap").style.display = proposals.length ? "" : "none";
+    $("#pcount").textContent = proposals.length;
+    const sorted = [...proposals].sort((a, b) => b.votes.length - a.votes.length);
+    $("#props").innerHTML = sorted.map(p => {
+      const img = poster({ id: p.id }), mine = p.votes.includes(name);
+      return `<div class="prop" data-id="${esc(p.id)}">
+        <span class="pimg" ${img ? `style="background-image:url('${esc(img)}')"` : ""}>${img ? "" : "🎬"}</span>
+        <span class="ptxt">${esc(p.title)}<small>${esc(p.by)}${p.votes.length > 1 ? " · за: " + esc(p.votes.join(", ")) : ""}</small></span>
+        <button data-act="vote" class="${mine ? "on" : ""}" title="${mine ? "Снять голос" : "Голосовать за"}">👍 ${p.votes.length}</button>
+        ${canControl() ? `<button data-act="play" title="Включить для всех">▶</button>` : ""}
+        ${amAdmin || p.by === name ? `<button data-act="del" title="Убрать">✕</button>` : ""}</div>`;
+    }).join("");
+  }
+  $("#props").onclick = e => {
+    const b = e.target.closest("button"), row = e.target.closest(".prop");
+    if (!b || !row) return;
+    const id = row.dataset.id;
+    if (b.dataset.act === "vote") send({ type: "vote", id });
+    else if (b.dataset.act === "play") loadMovie(id);
+    else if (b.dataset.act === "del") send({ type: "unpropose", id });
+  };
+  function propose(m) {
+    send({ type: "propose", id: m.id, title: m.title });
+    closeModal("detailModal"); closeModal("pickerModal");
+    toast("🗳 Предложили комнате — голосуйте!");
   }
 
   // ---- настройки (⚙️) ----
@@ -922,6 +1066,9 @@ async function renderRoom(roomId) {
         <label class="srow"><span class="txt">Свет в зале выключен<small>Всё вокруг плеера гаснет</small></span>
           <span class="switch"><input type="checkbox" id="lightsSw" ${$("#room").classList.contains("dark") ? "checked" : ""}><span></span></span></label>
       </div>
+      ${roomHistory.length ? `<div class="sgroup"><h4>Уже смотрели вместе</h4><div class="hist">${roomHistory.map(h =>
+        `<div class="hrow"><span title="${esc(h.title)}">${esc(h.title)}</span><small class="muted">${agoText(h.at)}</small>
+          <button class="btn ghost small" data-id="${esc(h.id)}" data-title="${esc(h.title)}" title="${canControl() ? "Включить снова" : "Предложить снова"}">${canControl() ? "▶" : "🗳"}</button></div>`).join("")}</div></div>` : ""}
       <div class="sgroup"><h4>Пригласить друзей</h4>
         <div class="srow"><input class="sinput" readonly value="${esc(inviteUrl)}" onclick="this.select()">
           <button class="btn small" id="copy2">Копировать</button></div>
@@ -929,7 +1076,7 @@ async function renderRoom(roomId) {
       <div class="sgroup"><h4>Горячие клавиши</h4>
         <div class="muted" style="font-size:13px;line-height:2"><span class="kbd">1</span>–<span class="kbd">8</span> реакции ·
           <span class="kbd">L</span> свет · <span class="kbd">F</span> полный экран · <span class="kbd">C</span> скрыть чат ·
-          <span class="kbd">M</span> звук чата · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
+          <span class="kbd">M</span> звук чата · <span class="kbd">B</span> перерыв · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
       </div>`;
     $("#everyone").onchange = e => send({ type: "mode", everyone: e.target.checked });
     $("#renameForm").onsubmit = e => { e.preventDefault(); rename($("#renameInput").value); };
@@ -937,6 +1084,10 @@ async function renderRoom(roomId) {
     $("#volSl").onchange = e => { volume = +e.target.value; store.set("kv_volume", String(volume)); ping("test"); };
     $("#lightsSw").onchange = () => toggleLights();
     $("#copy2").onclick = copyInvite;
+    $("#settingsBody").querySelectorAll(".hrow button").forEach(b => b.onclick = () => {
+      closeModal("settingsModal");
+      canControl() ? loadMovie(b.dataset.id) : propose({ id: b.dataset.id, title: b.dataset.title });
+    });
   }
 
   function rename(v) {
@@ -1035,7 +1186,46 @@ async function renderRoom(roomId) {
       box.innerHTML = `<span class="${i === 3 ? "go" : ""}">${s}</span>`;
     }, i * 1000));
     setTimeout(() => box.remove(), 4000);
+    // «Поехали!» — маленький салют из попкорна
+    for (let i = 0; i < 14; i++) setTimeout(() => floatReaction(["🍿", "🎉", "✨", "🎬"][i % 4], ""), 3000 + i * 70);
   }
+
+  // ☕ перерыв: пауза у всех и общий таймер на экране
+  let breakEnd = null, breakRang = false;
+  const saneTime = () => {
+    const t = player?.time();
+    return Number.isFinite(t) && !(t < 1 && lastState?.movie && expected() > 5) ? t : null;
+  };
+  function startBreak(min) {
+    const t = saneTime();
+    send(t != null ? { type: "break", minutes: min, position: t } : { type: "break", minutes: min });
+  }
+  $("#breakBtn").onclick = () => {
+    if (!player || !lastState?.movie) return toast("Сначала выберите фильм 🎬");
+    if (!canControl()) return toast("Сейчас просмотром управляет только администратор 👑");
+    openModal("breakModal");
+  };
+  $("#breakOpts").onclick = e => {
+    const b = e.target.closest("button");
+    if (b) { closeModal("breakModal"); startBreak(Number(b.dataset.m)); }
+  };
+  $("#brkGo").onclick = () => emit("play");
+  $("#brkMore").onclick = () => startBreak(Math.min(30, Math.max(0, Math.ceil((breakEnd - Date.now()) / 60000)) + 5));
+  function updateBreak(s) {
+    breakEnd = s.breakLeft != null && !s.playing ? Date.now() + s.breakLeft * 1000 : null;
+    if (!breakEnd || breakEnd > Date.now()) breakRang = false;
+    tickBreak();
+  }
+  function tickBreak() {
+    $("#breakOv").classList.toggle("show", Boolean(breakEnd));
+    if (!breakEnd) return;
+    const left = Math.max(0, Math.round((breakEnd - Date.now()) / 1000));
+    $("#brkT").textContent = clock(left);
+    $("#brkLbl").textContent = left ? "Перерыв" : "Перерыв окончен — пора смотреть! 🍿";
+    $("#brkGo").style.display = $("#brkMore").style.display = canControl() ? "" : "none";
+    if (!left && !breakRang) { breakRang = true; ping("mention"); }
+  }
+  setInterval(tickBreak, 1000);
   $("#cdBtn").onclick = async () => {
     if (!player) return toast("Сначала выберите фильм 🎬");
     if (!canControl()) return toast("Сейчас просмотром управляет только администратор 👑");
@@ -1257,6 +1447,7 @@ async function renderRoom(roomId) {
     users = s.users || [];
     lastState = { ...s, at: Date.now() };
     renderUsers();
+    if (!unread) document.title = roomTitle();
     if (!s.movie) return;
     if (s.movie.id !== remember.movieId) { remember.movieId = s.movie.id; remember(true); } else remember();
     ensurePlayer(s.movie);
@@ -1321,11 +1512,19 @@ async function renderRoom(roomId) {
     es.onerror = () => { es.close(); lost(); };
   }
   function onMsg(m) {
-    if (m.type === "state") applyState(m);
+    if (m.type === "state") { updateBreak(m); applyState(m); }
     else if (m.type === "users") {
       users = m.users;
-      if (lastState) Object.assign(lastState, { users: m.users }, "admin" in m ? { admin: m.admin } : {});
+      if (lastState) Object.assign(lastState, { users: m.users }, "admin" in m ? { admin: m.admin } : {}, m.lags ? { lags: m.lags } : {});
       renderUsers();
+    }
+    else if (m.type === "extras") {
+      proposals = m.proposals || []; roomHistory = m.history || [];
+      renderProps();
+      if ($("#settingsModal").classList.contains("open")) renderSettings();
+    }
+    else if (m.type === "typing") {
+      if (m.client !== CLIENT && m.name !== name) { typers.set(m.name, Date.now() + 4000); renderTyping(); }
     }
     else if (m.type === "you") { amAdmin = m.admin; renderUsers(); if (amAdmin) $("#gearBtn").title = "Настройки (вы администратор 👑)"; }
     else if (m.type === "chat") addChat(m);
@@ -1341,8 +1540,23 @@ async function renderRoom(roomId) {
   connect();
   // сервер не рассылает время по таймеру (комната спит) — подстраиваемся сами по последнему состоянию
   setInterval(() => {
+    if (lastState?.movie && player && !applying) checkLag();
     if (lastState?.movie && player && !applying && !player.busy?.()) applyState({ ...lastState, position: expected() });
   }, 5000);
+
+  // отставание: сообщаем комнате, только когда начали или перестали отставать (две проверки подряд)
+  let lagSent = 0, stuckTicks = 0;
+  function checkLag() {
+    let lag = 0;
+    if (lastState.playing) {
+      const t = player.time(), behind = Number.isFinite(t) ? expected() - t : 0;
+      const stuck = player.busy?.() || player.paused() || behind > 4;
+      stuckTicks = stuck ? stuckTicks + 1 : 0;
+      if (stuckTicks >= 2) lag = behind > 4 ? Math.round(behind) : 1;
+    } else stuckTicks = 0;
+    const changed = lag ? !lagSent || (lag >= 5) !== (lagSent >= 5) || Math.abs(lag - lagSent) > 15 : lagSent > 0;
+    if (changed) { lagSent = lag; send({ type: "lag", lag }); }
+  }
 
   const EMOJI = ["😂","😱","❤️","👍","🔥","😢","🍿","👏"];
   $("#reactbar").innerHTML = EMOJI.map((e, i) => `<button title="Реакция (клавиша ${i + 1})">${e}</button>`).join("");
@@ -1350,9 +1564,17 @@ async function renderRoom(roomId) {
     const b = e.target.closest("button");
     if (b) send({ type: "react", emoji: b.textContent });
   };
-  $("#quick").innerHTML = ["Ставлю на паузу ⏸", "Погнали! 🍿", "Ахахах 😂", "Жутко 😱", "Шедевр 🔥"]
+  $("#quick").innerHTML = `<button data-moment="1" title="Отправить в чат текущую минуту — по ней можно будет перемотать">📍 Момент</button>` +
+    ["Ставлю на паузу ⏸", "Погнали! 🍿", "Ахахах 😂", "Жутко 😱", "Шедевр 🔥"]
     .map(t => `<button>${t}</button>`).join("");
-  $("#quick").onclick = e => { const b = e.target.closest("button"); if (b) send({ type: "chat", text: b.textContent }); };
+  $("#quick").onclick = e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (!b.dataset.moment) return send({ type: "chat", text: b.textContent });
+    const t = saneTime() ?? (lastState?.movie ? expected() : null);
+    if (t == null) return toast("Сначала выберите фильм 🎬");
+    send({ type: "chat", text: `📍 Момент ${clock(t)}` });
+  };
 
   document.addEventListener("keydown", e => {
     if (e.target.matches("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1361,6 +1583,7 @@ async function renderRoom(roomId) {
     if (/^[1-8]$/.test(e.key)) send({ type: "react", emoji: EMOJI[+e.key - 1] });
     else if (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "д") toggleLights();
     else if (e.key.toLowerCase() === "m" || e.key.toLowerCase() === "ь") setSound(!soundOn);
+    else if (e.key.toLowerCase() === "b" || e.key.toLowerCase() === "и") $("#breakBtn").click();
     else if (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "а") setFs(!isFs());
     else if ((e.key.toLowerCase() === "c" || e.key.toLowerCase() === "с") && isFs()) toggleChat();
     else if (e.key === "Enter") {
@@ -1368,6 +1591,9 @@ async function renderRoom(roomId) {
       if (isFs() && roomEl.classList.contains("nochat")) quickChat(); else $("#chatin").focus();
     }
   });
+
+  $("#chatin").addEventListener("input", iAmTyping);
+  $("#fsIn").addEventListener("input", iAmTyping);
 
   $("#chatform").onsubmit = e => {
     e.preventDefault(); const t = $("#chatin").value.trim();
@@ -1387,11 +1613,14 @@ async function renderRoom(roomId) {
 
   let pickerReady = false;
   window.openPicker = () => {
-    if (!canControl()) return toast("Сейчас фильм может сменить только администратор 👑");
     if (!pickerReady) {
-      Catalog($("#pickerBody"), m => showDetail(m, [["▶ Включить для всех", () => loadMovie(m.id)]]));
+      // включить может тот, кому можно управлять, а предложить — любой
+      Catalog($("#pickerBody"), m => showDetail(m, canControl()
+        ? [["▶ Включить для всех", () => loadMovie(m.id)], ["🗳 Предложить комнате", () => propose(m), true]]
+        : [["🗳 Предложить комнате", () => propose(m)]]));
       pickerReady = true;
     }
+    if (!canControl()) toast("Включает фильм администратор 👑 — а вы можете предложить свой 🗳");
     openModal("pickerModal");
   };
 

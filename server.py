@@ -350,6 +350,9 @@ class Room:
         self.clients = {}  # client_id -> {"name", "queue", "admin"}
         self.presence = {}  # client_id -> {"name", "left_at"} — чтобы переподключение не писало «вышел/зашёл»
         self.chat = []
+        self.proposals = []  # фильмы, предложенные комнате: {"id", "title", "by", "votes": [имена]}
+        self.history = []    # что уже смотрели вместе
+        self.break_until = None  # «перерыв на 5 минут»: до какого времени
         self.admin_key = None   # секрет создателя комнаты
         self.everyone = True    # могут ли все управлять просмотром
 
@@ -371,6 +374,20 @@ class Room:
     def admin_name(self):
         return next((c["name"] for c in self.clients.values() if c["admin"]), None)
 
+    def lags(self):
+        """Кто сильно отстаёт от комнаты (медленный интернет): имя -> секунды."""
+        return {c["name"]: c["lag"] for c in self.clients.values() if c.get("lag")}
+
+    def break_left(self):
+        """Сколько секунд осталось до конца перерыва (шлём остаток — часы у всех разные)."""
+        if not self.break_until or self.playing:
+            return None
+        left = self.break_until - time.time()
+        return left if left > -3600 else None
+
+    def extras(self):
+        return {"type": "extras", "proposals": self.proposals, "history": self.history}
+
     def state(self):
         return {
             "type": "state",
@@ -380,6 +397,8 @@ class Room:
             "users": self.users(),
             "everyone": self.everyone,
             "admin": self.admin_name(),
+            "lags": self.lags(),
+            "breakLeft": self.break_left(),
         }
 
     def snapshot(self):
@@ -394,7 +413,7 @@ class Room:
         }
 
     def broadcast_users(self):
-        self.broadcast({"type": "users", "users": self.users(), "admin": self.admin_name()})
+        self.broadcast({"type": "users", "users": self.users(), "admin": self.admin_name(), "lags": self.lags()})
 
     def is_admin(self, key):
         return bool(key) and key == self.admin_key
@@ -498,7 +517,8 @@ class Forbidden(Exception):
     pass
 
 
-CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync"}
+CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break"}
+MOVIE_ID = re.compile(r"^[\w.:-]{1,160}$")
 
 
 def room_action(room, body):
@@ -518,10 +538,19 @@ def room_action(room, body):
             room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "subs", "source", "ytId", "embed")}
             room.playing = False
             room.position = 0.0
+            room.break_until = None
+            # предложение выполнено, а фильм попадает в историю комнаты
+            mid = room.movie["id"]
+            room.proposals = [p for p in room.proposals if p["id"] != mid]
+            room.history = ([{"id": mid, "title": room.movie["title"], "source": room.movie.get("source") or "archive",
+                              "by": name, "at": time.time() * 1000}] +
+                            [h for h in room.history if h["id"] != mid])[:20]
+            room.broadcast(room.extras())
             sys_msg = f"{name} включил(а) «{room.movie['title']}»"
         elif t == "play":
             room.position = position_from(body, room)
             room.playing = True
+            room.break_until = None
             sys_msg = f"{name}: ▶ пуск"
         elif t == "pause":
             room.position = position_from(body, room)
@@ -544,6 +573,50 @@ def room_action(room, body):
             room.playing = False
             room.broadcast({"type": "countdown", "name": name})
             sys_msg = f"{name} запустил(а) обратный отсчёт ⏱"
+        elif t == "break":
+            # перерыв: пауза у всех и общий таймер
+            try:
+                minutes = min(30, max(1, round(float(body.get("minutes") or 5))))
+            except (TypeError, ValueError):
+                minutes = 5
+            room.position = position_from(body, room)
+            room.playing = False
+            room.break_until = time.time() + minutes * 60
+            sys_msg = f"☕ {name} объявил(а) перерыв на {minutes} мин"
+        elif t == "typing":
+            room.broadcast({"type": "typing", "name": name, "client": body.get("client")})
+            return
+        elif t == "lag":
+            # клиент сообщает, только когда начал или перестал отставать — это редкое событие
+            client = room.clients.get(body.get("client"))
+            if client:
+                try:
+                    client["lag"] = min(36000, max(0, round(float(body.get("lag") or 0))))
+                except (TypeError, ValueError):
+                    client["lag"] = 0
+                room.broadcast_users()
+            return
+        elif t in ("propose", "vote", "unpropose"):
+            mid = str(body.get("id", ""))
+            if not MOVIE_ID.match(mid):
+                return
+            p = next((x for x in room.proposals if x["id"] == mid), None)
+            if t == "propose" and not p:
+                title = str(body.get("title", "")).strip()[:120] or "Фильм"
+                room.proposals = (room.proposals + [{"id": mid, "title": title, "by": name, "votes": [name]}])[-8:]
+                room.broadcast({"type": "system", "text": f"🗳 {name} предлагает «{title}»"})
+            elif t == "propose" and p:
+                if name not in p["votes"]:
+                    p["votes"].append(name)
+            elif t == "vote" and p:
+                # голос «за» — повторное нажатие снимает голос
+                p["votes"] = [v for v in p["votes"] if v != name] if name in p["votes"] else p["votes"] + [name]
+            elif t == "unpropose" and p and (admin or p["by"] == name):
+                room.proposals = [x for x in room.proposals if x is not p]
+            else:
+                return
+            room.broadcast(room.extras())
+            return
         elif t == "mode":
             if not admin:
                 raise Forbidden("Переключать режим может только администратор")
@@ -754,6 +827,7 @@ class Handler(BaseHTTPRequestHandler):
             room.clients[cid] = {"name": name, "queue": q, "admin": room.is_admin(key)}
             q.put({"type": "you", "admin": room.is_admin(key)})
             q.put(room.state())
+            q.put(room.extras())
             for m in room.chat[-30:]:
                 q.put(m)
             if not back:
