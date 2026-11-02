@@ -177,6 +177,61 @@ def youtube_search(q, page_token):
             "total": data.get("pageInfo", {}).get("totalResults", 0)}
 
 
+def rutube_search(q, page):
+    """Поиск по Rutube — публичный, без ключа. Только официальные каналы (Мосфильм, телеканалы, студии):
+    обычные загрузки там часто пиратские, а их мы не показываем."""
+    q = q.strip() or "Мосфильм"
+    data = fetch_json("https://rutube.ru/api/search/video/?" + urllib.parse.urlencode(
+        {"query": q, "page": page}), ttl=1800)
+    items = []
+    for r in data.get("results", []):
+        if not r.get("is_official") or r.get("is_adult") or not RUTUBE_ID.match(r.get("id") or ""):
+            continue
+        items.append({"id": "rt:" + r["id"], "title": r.get("title") or "Видео Rutube",
+                      "year": str(r.get("publication_ts") or "")[:4], "channel": (r.get("author") or {}).get("name", ""),
+                      "thumb": r.get("thumbnail_url"), "duration": r.get("duration") or 0,
+                      "description": strip_html(r.get("description") or "")[:300]})
+    return {"items": items, "next": str(page + 1) if data.get("has_next") else None,
+            "total": data.get("count") or len(items)}
+
+
+def wiki_about(title, year, strict=False):
+    """Краткое описание фильма из русской Википедии (поиск понимает и английские названия).
+    strict — для Rutube/YouTube: год там — дата загрузки, а название бывает любым, поэтому проверяем строже."""
+    if strict:
+        m = re.search(r"\b(19\d{2}|20\d{2})\b", str(title))
+        year = m.group(1) if m else ""
+    clean = re.sub(r"\s*[(\[].*?[)\]]\s*", " ", str(title))
+    clean = re.sub(r"[|«»\"]", " ", clean).strip()[:120]
+    if not clean:
+        return None
+    try:
+        found = fetch_json("https://ru.wikipedia.org/w/api.php?" + urllib.parse.urlencode({
+            "action": "query", "list": "search", "srsearch": f"{clean} {year or ''} фильм".strip(),
+            "srlimit": 1, "format": "json"}), ttl=86400)
+        hits = found.get("query", {}).get("search", [])
+        if not hits:
+            return None
+        s = fetch_json("https://ru.wikipedia.org/api/rest_v1/page/summary/" +
+                       urllib.parse.quote(hits[0]["title"].replace(" ", "_")), ttl=86400)
+    except Exception:  # noqa: BLE001
+        return None
+    if not s.get("extract") or s.get("type") == "disambiguation":
+        return None
+    # статья точно про этот фильм? (иначе лучше ничего, чем чужое описание)
+    def norm(t):
+        return re.sub(r"[\W_]+", " ", re.sub(r"\s*\(.*?\)\s*", " ", str(t).lower())).strip()
+    if strict:
+        a, b = norm(s.get("title", "")), norm(clean)
+        if not a or not (a in b or b in a):
+            return None
+    elif year and str(year) not in f"{s.get('description', '')} {s['extract']}":
+        return None
+    return {"title": s.get("title"), "description": s.get("description", ""), "extract": s["extract"][:900],
+            "url": s.get("content_urls", {}).get("desktop", {}).get("page", ""),
+            "image": (s.get("thumbnail") or {}).get("source")}
+
+
 def youtube_id_from_link(link):
     m = re.search(r"(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})", link)
     if m:
@@ -358,6 +413,9 @@ class Room:
         self.proposals = []  # фильмы, предложенные комнате: {"id", "title", "by", "votes": [имена]}
         self.history = []    # что уже смотрели вместе
         self.break_until = None  # «перерыв на 5 минут»: до какого времени
+        self.schedule = None     # сеанс по расписанию: когда начинаем
+        self.banned = {}         # кого выгнали: client_id или «n:имя» -> до какого времени
+        self.session = None      # для «итогов вечера»
         self.admin_key = None   # секрет создателя комнаты
         self.everyone = True    # могут ли все управлять просмотром
 
@@ -390,6 +448,20 @@ class Room:
         left = self.break_until - time.time()
         return left if left > -3600 else None
 
+    def avatars(self):
+        return {c["name"]: c["av"] for c in self.clients.values() if c.get("av")}
+
+    def send_to_name(self, name, msg):
+        for c in list(self.clients.values()):
+            if c["name"] == name:
+                c["queue"].put(msg)
+
+    def is_banned(self, cid, name):
+        now = time.time()
+        for k in [k for k, until in self.banned.items() if until < now]:
+            del self.banned[k]
+        return cid in self.banned or "n:" + name in self.banned
+
     def extras(self):
         return {"type": "extras", "proposals": self.proposals, "history": self.history}
 
@@ -404,6 +476,8 @@ class Room:
             "admin": self.admin_name(),
             "lags": self.lags(),
             "breakLeft": self.break_left(),
+            "avatars": self.avatars(),
+            "scheduleLeft": self.schedule - time.time() if self.schedule and not self.playing else None,
         }
 
     def snapshot(self):
@@ -419,7 +493,8 @@ class Room:
         }
 
     def broadcast_users(self):
-        self.broadcast({"type": "users", "users": self.users(), "admin": self.admin_name(), "lags": self.lags()})
+        self.broadcast({"type": "users", "users": self.users(), "admin": self.admin_name(), "lags": self.lags(),
+                        "avatars": self.avatars()})
 
     def is_admin(self, key):
         return bool(key) and key == self.admin_key
@@ -573,7 +648,14 @@ class Forbidden(Exception):
     pass
 
 
-CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck"}
+CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck", "schedule"}
+MSG_REACTS = {"👍", "❤️", "😂", "😮", "😢", "🔥"}
+
+
+def valid_avatar(av):
+    """Аватарка — одно эмодзи (с модификаторами), без букв и цифр."""
+    av = str(av or "")
+    return av if 0 < len(av) <= 8 and ord(av[0]) > 0x2000 and not any(ch.isalnum() or ch.isspace() for ch in av) else ""
 MOVIE_ID = re.compile(r"^[\w.:-]{1,160}$")
 
 
@@ -603,11 +685,15 @@ def room_action(room, body):
                               "by": name, "at": time.time() * 1000}] +
                             [h for h in room.history if h["id"] != mid])[:20]
             room.broadcast(room.extras())
+            room.session = {"movieId": mid, "startedAt": None, "messages": 0, "reacts": {}, "talk": {}}
             sys_msg = f"{name} включил(а) «{room.movie['title']}»"
         elif t == "play":
             room.position = position_from(body, room)
             room.playing = True
             room.break_until = None
+            room.schedule = None
+            if room.session and not room.session["startedAt"]:
+                room.session["startedAt"] = time.time() * 1000
             sys_msg = f"{name}: ▶ пуск"
         elif t == "pause":
             room.position = position_from(body, room)
@@ -628,8 +714,19 @@ def room_action(room, body):
             # общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
             room.position = position_from(body, room)
             room.playing = False
+            room.schedule = None  # отсчёт пошёл — расписание выполнено
             room.broadcast({"type": "countdown", "name": name})
             sys_msg = f"{name} запустил(а) обратный отсчёт ⏱"
+        elif t == "schedule":
+            # 🗓 сеанс по расписанию: время в секундах от «сейчас» — часы у всех разные
+            try:
+                sec = float(body.get("in"))
+            except (TypeError, ValueError):
+                sec = 0
+            room.schedule = time.time() + sec if 0 < sec < 7 * 86400 else None
+            room.position = room.current_position()
+            room.playing = False
+            sys_msg = f"🗓 {name} назначил(а) сеанс" if room.schedule else f"{name} отменил(а) сеанс"
         elif t == "break":
             # перерыв: пауза у всех и общий таймер
             try:
@@ -689,14 +786,90 @@ def room_action(room, body):
             text = str(body.get("text", "")).strip()[:500]
             if not text:
                 return
-            msg = {"type": "chat", "name": name, "text": text, "ts": time.time()}
+            msg = {"type": "chat", "id": secrets.token_hex(4), "name": name, "text": text, "ts": time.time()}
+            to = next((m for m in room.chat if body.get("reply") and m.get("id") == body.get("reply")), None)
+            if to:  # ответ на сообщение
+                msg["reply"] = {"id": to["id"], "name": to["name"], "text": to["text"][:80]}
+            if room.session:
+                room.session["messages"] += 1
+                room.session["talk"][name] = room.session["talk"].get(name, 0) + 1
             room.chat = (room.chat + [msg])[-100:]
             room.broadcast(msg)
             return
         elif t == "react":
             if body.get("emoji") in REACTIONS:
                 room.broadcast({"type": "react", "emoji": body["emoji"], "name": name})
+                if room.session:
+                    room.session["reacts"][body["emoji"]] = room.session["reacts"].get(body["emoji"], 0) + 1
             return
+        elif t == "msgreact":
+            # реакция на сообщение в чате; повторное нажатие снимает её
+            msg = next((m for m in room.chat if m.get("id") and m["id"] == body.get("id")), None)
+            emoji = body.get("emoji")
+            if not msg or emoji not in MSG_REACTS:
+                return
+            r = dict(msg.get("reactions") or {})
+            who = r.get(emoji, [])
+            r[emoji] = [n for n in who if n != name] if name in who else who + [name]
+            if not r[emoji]:
+                del r[emoji]
+            msg["reactions"] = r
+            room.broadcast({"type": "msgreact", "id": msg["id"], "reactions": r})
+            return
+        elif t == "avatar":
+            client = room.clients.get(body.get("client"))
+            if client:
+                client["av"] = valid_avatar(body.get("avatar"))
+                room.broadcast_users()
+            return
+        elif t in ("giveadmin", "kick"):
+            if not admin:
+                raise Forbidden("Это может только администратор комнаты")
+            target = str(body.get("target", ""))[:30]
+            if not target or target == name or target not in room.users():
+                return
+            if t == "giveadmin":
+                # корона переходит вместе с новым секретом: у старого админа он больше не действует
+                room.admin_key = secrets.token_hex(16)
+                for c in room.clients.values():
+                    c["admin"] = c["name"] == target
+                room.send_to_name(target, {"type": "adminkey", "key": room.admin_key})
+                for u in room.users():
+                    room.send_to_name(u, {"type": "you", "admin": u == target})
+                room.broadcast({"type": "system", "text": f"👑 {name} передал(а) корону: теперь администратор — {target}"})
+            else:
+                # выгнать: на 10 минут нельзя вернуться ни с этой вкладки, ни под этим именем
+                until = time.time() + 600
+                room.banned["n:" + target] = until
+                for cid, c in list(room.clients.items()):
+                    if c["name"] == target:
+                        room.banned[cid] = until
+                        room.presence.pop(cid, None)
+                        c["queue"].put({"type": "kicked"})
+                        del room.clients[cid]
+                room.broadcast({"type": "system", "text": f"{target} удалён(а) из комнаты"})
+                track_usage(room)
+            room.broadcast_users()
+            return
+        elif t == "rate":
+            # ⭐ оценка фильма — сохраняется в истории комнаты
+            try:
+                stars = round(float(body.get("stars")))
+            except (TypeError, ValueError):
+                return
+            h = room.movie and next((x for x in room.history if x["id"] == room.movie["id"]), None)
+            if not h or not 1 <= stars <= 5:
+                return
+            h["ratings"] = {**h.get("ratings", {}), name: stars}
+            room.broadcast(room.extras())
+            return
+        elif t == "summary":
+            # «итоги вечера»: отдаём только тому, кто спросил
+            ss = room.session if room.session and room.movie and room.session["movieId"] == room.movie["id"] else None
+            h = room.movie and next((x for x in room.history if x["id"] == room.movie["id"]), None)
+            return {"ok": True, "summary": ss and {**ss, "title": room.movie["title"],
+                                                  "position": room.current_position(),
+                                                  "ratings": (h or {}).get("ratings", {})}}
         elif t == "rename":
             client = room.clients.get(body.get("client"))
             new = str(body.get("new", "")).strip()[:30]
@@ -715,6 +888,16 @@ def room_action(room, body):
         room.broadcast(st)
         if sys_msg:
             room.broadcast({"type": "system", "text": sys_msg})
+
+
+# «значок на телефоне»: сайт открывается как приложение
+MANIFEST = {
+    "name": "КиноВместе", "short_name": "КиноВместе", "lang": "ru", "start_url": "/", "scope": "/",
+    "display": "standalone", "background_color": "#0b0b10", "theme_color": "#0b0b10",
+    "description": "Смотрите фильмы вместе с друзьями",
+    "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}],
+}
 
 
 # ---------------- Панель администратора сайта ----------------
@@ -793,6 +976,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(search_movies(
                     qs.get("q", [""])[0], qs.get("genre", [""])[0], page,
                     qs.get("sort", ["popular"])[0]))
+            if p == "/api/rutube/search":
+                return self.send_json(rutube_search(qs.get("q", [""])[0], max(1, int(qs.get("page", ["1"])[0] or 1))))
+            if p == "/api/wiki":
+                return self.send_json(wiki_about(qs.get("title", [""])[0], qs.get("year", [""])[0],
+                                                 qs.get("strict", [""])[0] == "1") or {})
+            if p == "/api/top":
+                week = time.time() * 1000 - 7 * 86400 * 1000
+                with rooms_lock:
+                    items = sorted(({"id": k, "title": f["title"], "source": f["source"], "n": f["n"]}
+                                    for k, f in films.items() if f["last"] > week), key=lambda f: -f["n"])[:12]
+                return self.send_json({"items": items})
+            if p == "/manifest.webmanifest":
+                return self.send_json(MANIFEST)
+            if p in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+                return self.send_file(os.path.join(STATIC, p[1:]), "image/png")
+            if p.startswith("/api/room/") and p.endswith("/info"):
+                with rooms_lock:
+                    room = rooms.get(p.split("/")[3])
+                return self.send_json({"taken": bool(room and (room.admin_key or room.movie or room.chat))})
             if p == "/api/yt/search":
                 return self.send_json(youtube_search(qs.get("q", [""])[0], qs.get("page", [""])[0]))
             if p == "/api/link":
@@ -876,12 +1078,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self.send_json({"error": "bad json"}, 400)
             try:
-                room_action(get_room(p.split("/")[3]), body)
+                res = room_action(get_room(p.split("/")[3]), body)
             except Forbidden as e:
                 return self.send_json({"error": str(e), "forbidden": True}, 403)
             except Exception as e:  # noqa: BLE001
                 return self.send_json({"error": str(e)}, 502)
-            return self.send_json({"ok": True})
+            return self.send_json(res or {"ok": True})
         self.send_error(404)
 
     def sse(self, rid, qs):
@@ -891,10 +1093,20 @@ class Handler(BaseHTTPRequestHandler):
         key = qs.get("admin", [""])[0][:64]
         q = queue.Queue()
         with room.lock:
+            banned = room.is_banned(cid, name)
+        if banned:  # выгнанный админом не возвращается сразу
+            data = b"data: " + json.dumps({"type": "kicked"}).encode() + b"\n\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return self.wfile.write(data)
+        with room.lock:
             if key and room.admin_key is None:
                 room.admin_key = key  # первым с секретом приходит создатель комнаты
             back = join_room(room, cid, name)
-            room.clients[cid] = {"name": name, "queue": q, "admin": room.is_admin(key)}
+            room.clients[cid] = {"name": name, "queue": q, "admin": room.is_admin(key),
+                                 "av": valid_avatar(qs.get("avatar", [""])[0])}
             q.put({"type": "you", "admin": room.is_admin(key)})
             q.put(room.state())
             q.put(room.extras())

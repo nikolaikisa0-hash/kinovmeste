@@ -6,6 +6,18 @@ import { DurableObject } from "cloudflare:workers";
 // страница встроена в Worker как текст — отдельная загрузка статики не нужна
 import INDEX_HTML from "../static/index.html";
 import ADMIN_HTML from "../static/admin.html";
+import ICON_192 from "../static/icon-192.png";
+import ICON_512 from "../static/icon-512.png";
+import ICON_APPLE from "../static/apple-touch-icon.png";
+
+// «значок на телефоне»: сайт открывается как приложение
+const MANIFEST = JSON.stringify({
+  name: "КиноВместе", short_name: "КиноВместе", lang: "ru", start_url: "/", scope: "/", display: "standalone",
+  background_color: "#0b0b10", theme_color: "#0b0b10", description: "Смотрите фильмы вместе с друзьями",
+  icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }],
+});
+const ICONS = { "/icon-192.png": ICON_192, "/icon-512.png": ICON_512, "/apple-touch-icon.png": ICON_APPLE };
 
 const UA = { "User-Agent": "KinoVmeste/1.0 (watch-party; public-domain films)" };
 
@@ -141,6 +153,47 @@ async function youtubeSearch(env, q, pageToken) {
     });
   }
   return { items, next: data.nextPageToken || null, total: data.pageInfo?.totalResults || 0 };
+}
+
+async function rutubeSearch(q, page) {
+  // поиск по Rutube — публичный, без ключа. Только официальные каналы (Мосфильм, телеканалы, студии):
+  // обычные загрузки там часто пиратские, а их мы не показываем
+  q = q.trim() || "Мосфильм";
+  const data = await fetchJson("https://rutube.ru/api/search/video/?" +
+    new URLSearchParams({ query: q, page: String(page) }), 1800);
+  const items = (data.results || []).filter(r => r.is_official && !r.is_adult && RUTUBE_ID.test(r.id || "")).map(r => ({
+    id: "rt:" + r.id, title: r.title || "Видео Rutube", year: String(r.publication_ts || "").slice(0, 4),
+    channel: r.author?.name || "", thumb: r.thumbnail_url, duration: r.duration || 0,
+    description: stripHtml(r.description || "").slice(0, 300),
+  }));
+  return { items, next: data.has_next ? String(page + 1) : null, total: data.count || items.length };
+}
+
+async function wikiAbout(title, year, strict) {
+  // краткое описание фильма из русской Википедии (поиск понимает и английские названия).
+  // strict — для Rutube/YouTube: год там — дата загрузки, а название бывает любым, поэтому проверяем строже
+  if (strict) year = String(title).match(/\b(19\d{2}|20\d{2})\b/)?.[1] || "";
+  const clean = String(title).replace(/\s*[([].*?[)\]]\s*/g, " ").replace(/[|«»"]/g, " ").trim().slice(0, 120);
+  if (!clean) return null;
+  try {
+    const found = await fetchJson("https://ru.wikipedia.org/w/api.php?" + new URLSearchParams({
+      action: "query", list: "search", srsearch: `${clean} ${year || ""} фильм`.trim(), srlimit: "1", format: "json" }), 86400);
+    const page = found.query?.search?.[0]?.title;
+    if (!page) return null;
+    const sum = await fetchJson("https://ru.wikipedia.org/api/rest_v1/page/summary/" +
+                                encodeURIComponent(page.replaceAll(" ", "_")), 86400);
+    if (!sum.extract || sum.type === "disambiguation") return null;
+    // статья точно про этот фильм? (иначе лучше ничего, чем чужое описание)
+    const norm = t => String(t).toLowerCase().replace(/\s*\(.*?\)\s*/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    if (strict) {
+      const a = norm(sum.title), b = norm(clean);
+      if (!a || !(b.includes(a) || a.includes(b))) return null;
+    } else if (year && !`${sum.description} ${sum.extract}`.includes(String(year))) return null;
+    return { title: sum.title, description: sum.description || "", extract: sum.extract.slice(0, 900),
+             url: sum.content_urls?.desktop?.page || "", image: sum.thumbnail?.source || null };
+  } catch {
+    return null;
+  }
 }
 
 function youtubeIdFromLink(link) {
@@ -287,8 +340,10 @@ const enc = new TextEncoder();
 
 class Forbidden extends Error {}
 
-const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck"]);
+const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck", "schedule"]);
 const MOVIE_ID = /^[\w.:-]{1,160}$/;
+const MSG_REACTS = new Set(["👍", "❤️", "😂", "😮", "😢", "🔥"]);
+const AVATAR = /^\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\u200d\ufe0f\p{Extended_Pictographic}]{0,6}$/u;
 const LEAVE_GRACE = 20_000;   // столько ждём переподключения, прежде чем написать «вышел»
 const PING_TIMEOUT = 150_000; // клиент шлёт ping раз в 25 с; дольше тишины — соединение мёртвое
 const WS_OPEN = 1;
@@ -313,6 +368,9 @@ export class Room extends DurableObject {
     this.proposals = [];   // фильмы, предложенные комнате: { id, title, by, votes: [имена] }
     this.history = [];     // что уже смотрели вместе
     this.breakUntil = null;  // «перерыв на 5 минут»: до какого времени
+    this.schedule = null;    // сеанс по расписанию: когда начинаем
+    this.banned = {};        // кого выгнали: client_id или «n:имя» -> до какого времени
+    this.session = null;     // для «итогов вечера»: { movieId, startedAt, messages, reacts, talk }
     this.timer = null;
     // на ping отвечает сам Cloudflare, не будя комнату: между событиями она «спит» и не тратит лимит
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -330,6 +388,7 @@ export class Room extends DurableObject {
       updated: this.updated, created: this.created, lastActive: this.lastActive, emptySince: this.emptySince,
       chat: this.chat, adminKey: this.adminKey, everyone: this.everyone,
       proposals: this.proposals, history: this.history, breakUntil: this.breakUntil,
+      schedule: this.schedule, banned: this.banned, session: this.session,
     });
   }
 
@@ -352,7 +411,7 @@ export class Room extends DurableObject {
   // все, кто сейчас на связи: через WebSocket и через запасной SSE
   live() {
     return [...this.sockets().map(ws => ws.deserializeAttachment()),
-            ...[...this.clients].map(([cid, c]) => ({ cid, name: c.name, admin: c.admin, lag: c.lag }))];
+            ...[...this.clients].map(([cid, c]) => ({ cid, name: c.name, admin: c.admin, lag: c.lag, av: c.av }))];
   }
 
   users() {
@@ -368,6 +427,24 @@ export class Room extends DurableObject {
     return Object.fromEntries(this.live().filter(c => c.lag > 0).map(c => [c.name, c.lag]));
   }
 
+  // свои аватарки-эмодзи: имя -> эмодзи
+  avatars() {
+    return Object.fromEntries(this.live().filter(c => c.av).map(c => [c.name, c.av]));
+  }
+
+  // отправить сообщение всем соединениям человека с таким именем
+  sendToName(name, msg) {
+    const data = JSON.stringify(msg);
+    for (const ws of this.sockets()) if (ws.deserializeAttachment().name === name) { try { ws.send(data); } catch {} }
+    for (const [cid, c] of this.clients) if (c.name === name) this.sendTo(cid, c, msg);
+  }
+
+  isBanned(cid, name) {
+    const now = Date.now();
+    for (const [k, until] of Object.entries(this.banned)) if (until < now) delete this.banned[k];
+    return Boolean(this.banned[cid] || this.banned["n:" + name]);
+  }
+
   // сколько секунд осталось до конца перерыва (часы у всех разные — шлём остаток, а не время)
   breakLeft() {
     if (!this.breakUntil || this.playing) return null;
@@ -378,7 +455,8 @@ export class Room extends DurableObject {
   state() {
     return { type: "state", movie: this.movie, playing: this.playing,
              position: this.currentPosition(), users: this.users(), everyone: this.everyone,
-             admin: this.adminName(), lags: this.lags(), breakLeft: this.breakLeft() };
+             admin: this.adminName(), lags: this.lags(), breakLeft: this.breakLeft(), avatars: this.avatars(),
+             scheduleLeft: this.schedule && !this.playing ? (this.schedule - Date.now()) / 1000 : null };
   }
 
   extras() {
@@ -421,7 +499,7 @@ export class Room extends DurableObject {
   }
 
   broadcastUsers() {
-    this.broadcast({ type: "users", users: this.users(), admin: this.adminName(), lags: this.lags() });
+    this.broadcast({ type: "users", users: this.users(), admin: this.adminName(), lags: this.lags(), avatars: this.avatars() });
   }
 
   // закрывает старое соединение того же клиента (обновил страницу — пришёл новым)
@@ -578,16 +656,18 @@ export class Room extends DurableObject {
     if (m && this.roomId !== m[1]) { this.roomId = m[1]; this.save(); }
     if (url.pathname.endsWith("/ws")) return this.wsConnect(request, url);
     if (url.pathname.endsWith("/events")) return this.events(url);
+    // занят ли адрес (для красивых ссылок на комнату)
+    if (url.pathname.endsWith("/info")) return json({ taken: Boolean(this.adminKey || this.movie || this.chat.length) });
     if (request.method === "POST" && url.pathname.endsWith("/action")) {
       let body;
       try { body = await request.json(); } catch { return json({ error: "bad json" }, 400); }
       try {
-        await this.action(body);
+        const res = await this.action(body);
+        return json(res || { ok: true });
       } catch (e) {
         if (e instanceof Forbidden) return json({ error: e.message, forbidden: true }, 403);
         return json({ error: String(e.message || e) }, 502);
       }
-      return json({ ok: true });
     }
     return new Response("Not found", { status: 404 });
   }
@@ -597,17 +677,24 @@ export class Room extends DurableObject {
     const name = (url.searchParams.get("name") || "Гость").slice(0, 30);
     const key = (url.searchParams.get("admin") || "").slice(0, 64);
     if (key && this.adminKey === null) { this.adminKey = key; this.save(); }  // первым с секретом приходит создатель
-    return { cid, name, admin: this.isAdmin(key) };
+    const av = url.searchParams.get("avatar") || "";
+    return { cid, name, admin: this.isAdmin(key), av: AVATAR.test(av) ? av : "" };
   }
 
   // основной канал: WebSocket, который не держит комнату «проснувшейся»
   wsConnect(request, url) {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected websocket", { status: 426 });
-    const { cid, name, admin } = this.clientParams(url);
-    this.replace(cid);
+    const { cid, name, admin, av } = this.clientParams(url);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ cid, name, admin, at: Date.now() });
+    if (this.isBanned(cid, name)) {  // выгнанный админом не возвращается сразу
+      server.serializeAttachment({ cid, name, gone: true });
+      server.send(JSON.stringify({ type: "kicked" }));
+      server.close(4003, "kicked");
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    this.replace(cid);
+    server.serializeAttachment({ cid, name, admin, av, at: Date.now() });
     const back = this.join(cid, name);
     this.greet(msg => server.send(JSON.stringify(msg)), admin);
     this.announce(name, back);
@@ -616,10 +703,15 @@ export class Room extends DurableObject {
 
   // запасной канал: Server-Sent Events (если WebSocket недоступен)
   events(url) {
-    const { cid, name, admin } = this.clientParams(url);
-    this.replace(cid);
+    const { cid, name, admin, av } = this.clientParams(url);
     const { readable, writable } = new TransformStream();
-    const client = { name, writer: writable.getWriter(), admin };
+    if (this.isBanned(cid, name)) {
+      const w = writable.getWriter();
+      w.write(enc.encode(`data: ${JSON.stringify({ type: "kicked" })}\n\n`)).then(() => w.close()).catch(() => {});
+      return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    }
+    this.replace(cid);
+    const client = { name, writer: writable.getWriter(), admin, av };
     this.clients.set(cid, client);
     const back = this.join(cid, name);
     this.greet(msg => this.sendTo(cid, client, msg), admin);
@@ -655,11 +747,14 @@ export class Room extends DurableObject {
       this.history = [{ id: this.movie.id, title: this.movie.title, source: this.movie.source || "archive",
                         by: name, at: Date.now() }, ...this.history.filter(h => h.id !== this.movie.id)].slice(0, 20);
       this.broadcast(this.extras());
+      this.session = { movieId: this.movie.id, startedAt: null, messages: 0, reacts: {}, talk: {} };
       sysMsg = `${name} включил(а) «${this.movie.title}»`;
     } else if (t === "play") {
       this.position = this.positionFrom(body);
       this.playing = true;
       this.breakUntil = null;
+      this.schedule = null;
+      if (this.session && !this.session.startedAt) this.session.startedAt = Date.now();
       sysMsg = `${name}: ▶ пуск`;
     } else if (t === "pause") {
       this.position = this.positionFrom(body);
@@ -679,8 +774,16 @@ export class Room extends DurableObject {
       // общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
       this.position = this.positionFrom(body);
       this.playing = false;
+      this.schedule = null;  // отсчёт пошёл — расписание выполнено
       this.broadcast({ type: "countdown", name });
       sysMsg = `${name} запустил(а) обратный отсчёт ⏱`;
+    } else if (t === "schedule") {
+      // 🗓 сеанс по расписанию: время в секундах от «сейчас» — часы у всех разные
+      const sec = Number(body.in);
+      this.schedule = Number.isFinite(sec) && sec > 0 && sec < 7 * 86400 ? Date.now() + sec * 1000 : null;
+      this.position = this.currentPosition();
+      this.playing = false;
+      sysMsg = this.schedule ? `🗓 ${name} назначил(а) сеанс` : `${name} отменил(а) сеанс`;
     } else if (t === "break") {
       // перерыв: пауза у всех и общий таймер
       const min = Math.min(30, Math.max(1, Math.round(Number(body.minutes) || 5)));
@@ -734,14 +837,100 @@ export class Room extends DurableObject {
     } else if (t === "chat") {
       const text = String(body.text || "").trim().slice(0, 500);
       if (!text) return;
-      const msg = { type: "chat", name, text, ts: Date.now() / 1000 };
+      const msg = { type: "chat", id: crypto.randomUUID().slice(0, 8), name, text, ts: Date.now() / 1000 };
+      const to = body.reply && this.chat.find(m => m.id === body.reply);
+      if (to) msg.reply = { id: to.id, name: to.name, text: to.text.slice(0, 80) };  // ответ на сообщение
+      if (this.session) {
+        this.session.messages++;
+        this.session.talk[name] = (this.session.talk[name] || 0) + 1;
+      }
       this.chat = [...this.chat, msg].slice(-100);
       this.broadcast(msg);
       this.save();
       return;
     } else if (t === "react") {
-      if (REACTIONS.has(body.emoji)) this.broadcast({ type: "react", emoji: body.emoji, name });
+      if (!REACTIONS.has(body.emoji)) return;
+      this.broadcast({ type: "react", emoji: body.emoji, name });
+      if (this.session) { this.session.reacts[body.emoji] = (this.session.reacts[body.emoji] || 0) + 1; this.save(); }
       return;
+    } else if (t === "msgreact") {
+      // реакция на сообщение в чате; повторное нажатие снимает её
+      const msg = this.chat.find(m => m.id === body.id);
+      if (!msg || !MSG_REACTS.has(body.emoji)) return;
+      const r = { ...(msg.reactions || {}) }, who = r[body.emoji] || [];
+      r[body.emoji] = who.includes(name) ? who.filter(n => n !== name) : [...who, name];
+      if (!r[body.emoji].length) delete r[body.emoji];
+      msg.reactions = r;
+      this.broadcast({ type: "msgreact", id: msg.id, reactions: r });
+      this.save();
+      return;
+    } else if (t === "avatar") {
+      const av = String(body.avatar || "");
+      for (const ws of this.sockets()) {
+        const a = ws.deserializeAttachment();
+        if (a.cid === body.client) ws.serializeAttachment({ ...a, av: AVATAR.test(av) ? av : "" });
+      }
+      const c = this.clients.get(body.client);
+      if (c) c.av = AVATAR.test(av) ? av : "";
+      this.broadcastUsers();
+      return;
+    } else if (t === "giveadmin" || t === "kick") {
+      if (!admin) throw new Forbidden("Это может только администратор комнаты");
+      const target = String(body.target || "").slice(0, 30);
+      if (!target || target === name || !this.users().includes(target)) return;
+      if (t === "giveadmin") {
+        // корона переходит вместе с новым секретом: у старого админа он больше не действует
+        this.adminKey = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join("");
+        for (const ws of this.sockets()) {
+          const a = ws.deserializeAttachment();
+          ws.serializeAttachment({ ...a, admin: a.name === target });
+        }
+        for (const [, c] of this.clients) c.admin = c.name === target;
+        this.sendToName(target, { type: "adminkey", key: this.adminKey });
+        for (const u of this.users()) this.sendToName(u, { type: "you", admin: u === target });
+        this.broadcast({ type: "system", text: `👑 ${name} передал(а) корону: теперь администратор — ${target}` });
+      } else {
+        // выгнать: на 10 минут нельзя вернуться ни с этой вкладки, ни под этим именем
+        const until = Date.now() + 10 * 60_000;
+        this.banned["n:" + target] = until;
+        for (const ws of this.sockets()) {
+          const a = ws.deserializeAttachment();
+          if (a.name !== target) continue;
+          this.banned[a.cid] = until;
+          delete this.presence[a.cid];
+          ws.serializeAttachment({ ...a, gone: true });
+          try { ws.send(JSON.stringify({ type: "kicked" })); ws.close(4003, "kicked"); } catch {}
+        }
+        for (const [cid, c] of this.clients) {
+          if (c.name !== target) continue;
+          this.banned[cid] = until;
+          delete this.presence[cid];
+          this.sendTo(cid, c, { type: "kicked" });
+          this.clients.delete(cid);
+          c.writer.close().catch(() => {});
+        }
+        this.ctx.storage.put("presence", this.presence);
+        this.broadcast({ type: "system", text: `${target} удалён(а) из комнаты` });
+      }
+      this.broadcastUsers();
+      this.save();
+      this.report();
+      return;
+    } else if (t === "rate") {
+      // ⭐ оценка фильма — сохраняется в истории комнаты
+      const stars = Math.round(Number(body.stars));
+      const h = this.movie && this.history.find(x => x.id === this.movie.id);
+      if (!h || !(stars >= 1 && stars <= 5)) return;
+      h.ratings = { ...(h.ratings || {}), [name]: stars };
+      this.broadcast(this.extras());
+      this.save();
+      return;
+    } else if (t === "summary") {
+      // «итоги вечера»: отдаём только тому, кто спросил
+      const ss = this.session && this.movie && this.session.movieId === this.movie.id ? this.session : null;
+      const h = this.movie && this.history.find(x => x.id === this.movie.id);
+      return { ok: true, summary: ss && { ...ss, title: this.movie.title, position: this.currentPosition(),
+                                          ratings: h?.ratings || {} } };
     } else if (t === "rename") {
       const nw = String(body.new || "").trim().slice(0, 30);
       let old = null;
@@ -850,6 +1039,14 @@ export class Registry extends DurableObject {
              today, days: [...this.days.slice(-13), today], top };
   }
 
+  // «смотрят в КиноВместе»: самые включаемые фильмы за неделю (только названия — без комнат и имён)
+  async topWeek() {
+    const since = Date.now() - 7 * DAY_MS;
+    return Object.entries(this.films).filter(([, f]) => f.last > since)
+      .map(([id, f]) => ({ id, title: f.title, source: f.source, n: f.n }))
+      .sort((a, b) => b.n - a.n).slice(0, 12);
+  }
+
   // спрашивает «живые» комнаты напрямую — на случай, если реестр что-то пропустил
   async refreshAll() {
     const active = Object.values(this.rooms).filter(r => r.users.length);
@@ -946,6 +1143,18 @@ export default {
         return json(await searchMovies(qs.get("q") || "", qs.get("genre") || "", page, qs.get("sort") || "popular"));
       }
       if (p === "/api/yt/search") return json(await youtubeSearch(env, qs.get("q") || "", qs.get("page") || ""));
+      if (p === "/api/rutube/search") {
+        return json(await rutubeSearch(qs.get("q") || "", Math.max(1, parseInt(qs.get("page") || "1", 10) || 1)));
+      }
+      if (p === "/api/wiki") return json(await wikiAbout(qs.get("title") || "", qs.get("year") || "", qs.get("strict") === "1") || {});
+      if (p === "/api/top") {
+        // топ недели меняется медленно — держим в памяти 10 минут, чтобы не будить реестр
+        const hit = memo.get("top");
+        if (hit && Date.now() - hit.at < 600_000) return json(hit.data);
+        const data = { items: await env.REGISTRY.get(env.REGISTRY.idFromName("all")).topWeek() };
+        memo.set("top", { at: Date.now(), data });
+        return json(data);
+      }
       if (p === "/api/link") {
         const info = await infoFromLink((qs.get("url") || "").trim());
         if (!info) return json({ error: "Не получилось открыть ссылку: нужна ссылка на видео " +
@@ -965,7 +1174,7 @@ export default {
       }
       if (p === "/api/new-room") return json({ id: newRoomId() });
       if (p.startsWith("/api/admin/")) return await adminApi(request, env, url);
-      const m = p.match(/^\/api\/room\/([\w-]{1,64})\/(events|action|ws)$/);
+      const m = p.match(/^\/api\/room\/([\w-]{1,64})\/(events|action|ws|info)$/);
       if (m) return env.ROOMS.get(env.ROOMS.idFromName(m[1])).fetch(request);
     } catch (e) {
       return json({ error: String(e.message || e) }, 502);
@@ -973,6 +1182,10 @@ export default {
     const html = text => new Response(text, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     if (p === "/" || p.startsWith("/room/")) return html(INDEX_HTML);
     if (p === "/admin" || p === "/admin/") return html(ADMIN_HTML);
+    if (p === "/manifest.webmanifest") {
+      return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
+    }
+    if (ICONS[p]) return new Response(ICONS[p], { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=604800" } });
     return new Response("Not found", { status: 404 });
   },
 };

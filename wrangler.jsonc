@@ -5,7 +5,11 @@
   "main": "worker/index.js",
   "compatibility_date": "2025-09-01",
   // static/index.html встраивается в Worker как текст (import в worker/index.js)
-  "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": true }],
+  // иконки для «значка на телефоне» — как двоичные данные
+  "rules": [
+    { "type": "Text", "globs": ["**/*.html"], "fallthrough": true },
+    { "type": "Data", "globs": ["**/*.png"], "fallthrough": true }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "ROOMS", "class_name": "Room" },
