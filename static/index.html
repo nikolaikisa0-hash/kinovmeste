@@ -339,6 +339,29 @@
   .breakov .bt { font: 800 clamp(40px, 9vw, 96px)/1 "Unbounded", sans-serif; background: var(--grad); -webkit-background-clip: text; background-clip: text;
     color: transparent; margin: 8px 0 6px; font-variant-numeric: tabular-nums; }
   .breakov .acts { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  /* заставка: занавес раздвигается, по центру — название фильма */
+  .intro { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: var(--radius); display: none; }
+  .intro.show { display: block; }
+  .intro .cl, .intro .cr { position: absolute; top: 0; bottom: 0; width: 51%;
+    background: repeating-linear-gradient(90deg, #6d0b17 0 18px, #9e1428 18px 30px, #6d0b17 30px 44px);
+    box-shadow: inset 0 -60px 80px rgba(0,0,0,.55), inset 0 40px 60px rgba(0,0,0,.35); }
+  .intro .cl { left: 0; animation: curtL 3s cubic-bezier(.7,0,.25,1) forwards; }
+  .intro .cr { right: 0; animation: curtR 3s cubic-bezier(.7,0,.25,1) forwards; }
+  @keyframes curtL { 0%, 35% { transform: none; } 100% { transform: translateX(-102%); } }
+  @keyframes curtR { 0%, 35% { transform: none; } 100% { transform: translateX(102%); } }
+  .intro .it { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: #fff;
+    font: 800 clamp(22px, 4.5vw, 46px)/1.15 "Unbounded", sans-serif; text-shadow: 0 4px 30px rgba(0,0,0,.85); animation: introT 3s forwards; }
+  .intro .it small { display: block; font: 700 12px/1 "Manrope", sans-serif; letter-spacing: 4px; text-transform: uppercase; opacity: .85; margin-bottom: 12px; }
+  @keyframes introT { 0% { opacity: 0; transform: scale(.92); } 18% { opacity: 1; transform: none; } 60% { opacity: 1; } 100% { opacity: 0; transform: scale(1.06); } }
+  .room.fs .intro, .room.fs .pauseov { border-radius: 0; }
+  /* экран паузы: видно, кто поставил паузу и на какой минуте */
+  .pauseov { position: absolute; inset: 0; z-index: 3; pointer-events: none; display: grid; place-items: center; text-align: center;
+    border-radius: var(--radius); background: radial-gradient(circle, rgba(0,0,0,.55), rgba(0,0,0,.82)); opacity: 0; transition: opacity .8s;
+    text-shadow: 0 2px 12px rgba(0,0,0,.9); }
+  .pauseov .muted { color: #e5e4ee; }
+  .pauseov.show { opacity: 1; }
+  .pauseov .pbig { font-size: clamp(40px, 7vw, 64px); opacity: .9; }
+  .pauseov b { display: block; font: 800 clamp(16px, 2.6vw, 22px)/1.3 "Unbounded", sans-serif; margin-top: 6px; }
   .breakopts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 22px 22px; }
   .breakopts .btn { flex-direction: column; gap: 4px; padding: 16px 8px; font-size: 26px; }
   .breakopts .btn small { font-size: 13px; }
@@ -1093,6 +1116,9 @@ async function renderRoom(roomId) {
             <div class="muted">Фильм стоит на паузе у всех</div>
             <div class="acts"><button class="btn" id="brkGo">▶ Продолжить</button>
               <button class="btn ghost" id="brkMore">+5 мин</button></div></div></div>
+          <div class="intro" id="introOv"><div class="cl"></div><div class="cr"></div><div class="it" id="introT"></div></div>
+          <div class="pauseov" id="pauseOv"><div><div class="pbig">⏸</div><b id="pauseWho">Пауза</b>
+            <div class="muted" id="pauseAt"></div></div></div>
           <div class="breakov" id="readyOv"><div>
             <div class="cup">🍿</div>
             <div class="bt" style="font-size:clamp(28px,5vw,48px)">Все готовы?</div>
@@ -1515,6 +1541,8 @@ async function renderRoom(roomId) {
           <input type="range" class="range" id="volSl" min="5" max="100" step="5" value="${volume}" aria-label="Громкость звука чата"></div>
         <label class="srow"><span class="txt">Уведомления<small>Когда вкладка свёрнута: вас упомянули, фильм запустили, начинается сеанс</small></span>
           <span class="switch"><input type="checkbox" id="notifySw" ${notifyOn ? "checked" : ""}><span></span></span></label>
+        <label class="srow"><span class="txt">Заставки<small>Занавес с названием перед фильмом и экран паузы — кто её поставил и на какой минуте</small></span>
+          <span class="switch"><input type="checkbox" id="introSw" ${introOn ? "checked" : ""}><span></span></span></label>
         <label class="srow"><span class="txt">Звуки реакций<small>Смех, аплодисменты и другие — когда кто-то жмёт реакцию</small></span>
           <span class="switch"><input type="checkbox" id="rsoundSw" ${reactSoundOn ? "checked" : ""}><span></span></span></label>
         <label class="srow"><span class="txt">Свет в зале выключен<small>Всё вокруг плеера гаснет</small></span>
@@ -1540,6 +1568,7 @@ async function renderRoom(roomId) {
     $("#soundSw").onchange = e => setSound(e.target.checked);
     $("#volSl").onchange = e => { volume = +e.target.value; store.set("kv_volume", String(volume)); ping("test"); };
     $("#notifySw").onchange = e => setNotify(e.target.checked);
+    $("#introSw").onchange = e => { introOn = e.target.checked; store.set("kv_intro", introOn ? "1" : "0"); if (introOn && lastState?.movie) showIntro(lastState.movie.title); tickPause(); };
     $("#rsoundSw").onchange = e => {
       reactSoundOn = e.target.checked; store.set("kv_rsound", reactSoundOn ? "1" : "0");
       if (reactSoundOn) reactSound("👏");
@@ -1815,6 +1844,40 @@ async function renderRoom(roomId) {
       box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
     }).catch(() => { box.closest(".qr")?.remove(); qrLib = null; });
   }
+
+  // 🎬 заставки: занавес перед началом фильма и экран паузы
+  let introOn = store.get("kv_intro", "1") === "1", introFor = null, countdownAt = 0;
+  let pausedBy = null, pausedSince = 0;
+  function showIntro(title) {
+    const ov = $("#introOv");
+    ov.classList.remove("show");
+    void ov.offsetWidth;  // перезапуск анимации
+    $("#introT").innerHTML = `<div><small>КиноВместе представляет</small>${esc(title)}</div>`;
+    ov.classList.add("show");
+    clearTimeout(showIntro.t); showIntro.t = setTimeout(() => ov.classList.remove("show"), 3100);
+  }
+  function stateForScreens(m, wasPlaying) {
+    if (!m.movie) return;
+    if (m.playing && !wasPlaying) {
+      pausedBy = null;
+      // фильм пошёл с самого начала — занавес (если только что не было отсчёта 3-2-1)
+      if (introOn && m.position < 5 && introFor !== m.movie.id && Date.now() - countdownAt > 6000) showIntro(m.movie.title);
+      introFor = m.movie.id;
+    } else if (!m.playing && (wasPlaying || m.byName)) {
+      if (wasPlaying) pausedSince = Date.now();
+      if (m.byName) pausedBy = m.byName;
+    }
+    if (!m.playing && !pausedSince && m.position > 5) pausedSince = Date.now();  // зашли, а фильм уже на паузе
+  }
+  function tickPause() {
+    const busy = ["#breakOv", "#schedOv", "#readyOv"].some(id => $(id).classList.contains("show"));
+    const on = introOn && lastState?.movie && !lastState.playing && pausedSince && Date.now() - pausedSince > 20000 && !busy;
+    $("#pauseOv").classList.toggle("show", Boolean(on));
+    if (!on) return;
+    $("#pauseWho").textContent = pausedBy ? `Пауза · поставил(а) ${pausedBy}` : "Пауза";
+    $("#pauseAt").textContent = `на ${clock(lastState.position)} · нажмите ▶ или пробел, чтобы продолжить`;
+  }
+  setInterval(tickPause, 1000);
 
   // 🙉 «Что он сказал?»: отмотать всем на 10 секунд (или попросить об этом, если управляет админ)
   $("#saidBtn").onclick = () => {
@@ -2345,6 +2408,7 @@ async function renderRoom(roomId) {
       if (m.playing && ready) { ready = null; renderReady(); }  // фильм пошёл — спрашивать о готовности уже незачем
       if (m.playing && lastState && !lastState.playing && m.by !== CLIENT && m.movie) notify("▶ Фильм запустили", m.movie.title);
       if (m.avatars) AVATARS = m.avatars;
+      stateForScreens(m, Boolean(lastState?.playing));
       updateBreak(m); updateSchedule(m); applyState(m);
     }
     else if (m.type === "users") {
@@ -2397,7 +2461,7 @@ async function renderRoom(roomId) {
     else if (m.type === "chat") addChat(m);
     else if (m.type === "system") addSys(m.text);
     else if (m.type === "react") { floatReaction(m.emoji, m.name); reactSound(m.emoji); }
-    else if (m.type === "countdown") { ready = null; renderReady(); schedEnd = null; schedFired = true; tickSchedule(); showCountdown(); }
+    else if (m.type === "countdown") { ready = null; renderReady(); schedEnd = null; schedFired = true; tickSchedule(); countdownAt = Date.now(); showCountdown(); }
     else if (m.type === "syncreq" && amAdmin && player) {
       // администратор отвечает своим точным временем
       const t = player.time();

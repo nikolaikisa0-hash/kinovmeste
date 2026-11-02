@@ -906,6 +906,7 @@ def room_action(room, body):
         room.updated = room.last_active = time.time()
         st = room.state()
         st["by"] = body.get("client")
+        st["byName"] = name  # для «Вася поставил паузу»
         room.broadcast(st)
         if sys_msg:
             room.broadcast({"type": "system", "text": sys_msg})

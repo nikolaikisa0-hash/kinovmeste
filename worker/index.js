@@ -975,7 +975,7 @@ export class Room extends DurableObject {
     }
     this.updated = Date.now();
     this.lastActive = this.updated;
-    this.broadcast({ ...this.state(), by: body.client });
+    this.broadcast({ ...this.state(), by: body.client, byName: name });  // byName — для «Вася поставил паузу»
     if (sysMsg) this.broadcast({ type: "system", text: sysMsg });
     this.save();
     this.report();
