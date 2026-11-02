@@ -750,6 +750,9 @@ export class Room extends DurableObject {
       if (!info) throw new Error("у этого фильма нет видеофайла");
       this.movie = Object.fromEntries(["id", "title", "year", "url", "lite", "subs", "source", "ytId", "embed"]
         .map(k => [k, info[k] ?? null]));
+      // VK не отдаёт название видео серверу — его можно задать самим
+      const own = String(body.title || "").replace(/\s+/g, " ").trim().slice(0, 120);
+      if (info.source === "vk" && own) this.movie.title = own;
       this.playing = false;
       this.position = 0;
       this.breakUntil = null;

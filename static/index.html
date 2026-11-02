@@ -779,6 +779,7 @@ function newRoom(movieId, t) {
     const q = new URLSearchParams();
     if (movieId) q.set("movie", movieId);
     if (t) q.set("t", Math.floor(t));
+    if (movieId && vkTitles.get(movieId)) q.set("title", vkTitles.get(movieId));
     location.href = "/room/" + id + (q.toString() ? "?" + q : "");
   };
 }
@@ -932,6 +933,7 @@ function Catalog(container, onPick) {
   setSource("archive");
 }
 
+const vkTitles = new Map();  // свои названия для видео VK: id -> название
 function showDetail(m, actions) {
   const img = esc(poster(m));  // адрес картинки приходит от источника — экранируем
   $("#detailBody").innerHTML = `<div class="detail">
@@ -939,6 +941,8 @@ function showDetail(m, actions) {
       <button class="x close" onclick="closeModal('detailModal')" aria-label="Закрыть">✕</button>
       ${img ? `<img src="${img}" alt="" class="${m.id.includes(":") ? "wideimg" : ""}">` : ""}
       <div><h2>${esc(m.title)}</h2><div class="muted">${esc([m.year, m.channel].filter(Boolean).join(" · "))}</div>
+        ${m.id.startsWith("vk:") ? `<input class="sinput" id="vkTitle" maxlength="120" style="margin-top:12px;width:100%"
+          placeholder="Как назвать видео? Например: Брат 2" value="${esc(vkTitles.get(m.id) || "")}">` : ""}
         <p>${esc(m.description || "Описание отсутствует.")}</p>
         <div class="acts" id="detailActions"></div></div></div>`;
   for (const [label, fn, ghost] of actions) {
@@ -946,6 +950,14 @@ function showDetail(m, actions) {
     b.className = "btn" + (ghost ? " ghost" : ""); b.textContent = label; b.onclick = fn;
     $("#detailActions").appendChild(b);
   }
+  // VK не сообщает название видео — его можно вписать самим, и его увидят все в комнате
+  $("#vkTitle")?.addEventListener("input", e => {
+    const v = e.target.value.trim();
+    v ? vkTitles.set(m.id, v) : vkTitles.delete(m.id);
+    m.title = v || "Видео VK";
+    $("#detailBody h2").textContent = m.title;
+  });
+  if (vkTitles.get(m.id)) m.title = vkTitles.get(m.id);
   const wb = document.createElement("button");
   const wl = () => { wb.textContent = watchlist.has(m.id) ? "★ В моём списке" : "☆ Хочу посмотреть"; };
   wb.className = "btn ghost"; wl();
@@ -2463,13 +2475,15 @@ async function renderRoom(roomId) {
   };
 
   let skipResume = false;  // фильм включили сразу с нужного места — второй раз не предлагаем
+  let pendingTitle = new URLSearchParams(location.search).get("title") || "";  // название VK из ссылки на новую комнату
   async function loadMovie(id, t) {
     if (!canControl()) return toast("Сейчас фильм может сменить только администратор 👑");
     toast("🎞 Загружаем фильм…");
     const info = await fetch("/api/movie/" + encodeURIComponent(id)).then(r => r.json());
     if (info.error) return toast(info.error);
     if (t) skipResume = true;  // место уже выбрано — не спрашиваем «продолжить?»
-    const r = await send({ type: "load", id }).then(r => r.json());
+    const r = await send({ type: "load", id, title: vkTitles.get(id) || pendingTitle || "" }).then(r => r.json());
+    pendingTitle = "";
     if (r.forbidden) return;
     if (r.error) return toast("Не удалось включить фильм: " + r.error);
     if (t) { send({ type: "seek", position: t }); toast("▶ Продолжаем с " + clock(t)); }

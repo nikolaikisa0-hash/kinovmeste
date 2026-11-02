@@ -681,6 +681,10 @@ def room_action(room, body):
     with room.lock:
         if t == "load":
             room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "lite", "subs", "source", "ytId", "embed")}
+            # VK не отдаёт название видео серверу — его можно задать самим
+            own = " ".join(str(body.get("title", "")).split())[:120]
+            if info.get("source") == "vk" and own:
+                room.movie["title"] = own
             room.playing = False
             room.position = 0.0
             room.break_until = None
