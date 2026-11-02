@@ -259,6 +259,9 @@
   .msg.mine { flex-direction: row-reverse; }
   .msg.mine .bubble { background: var(--grad); color: #fff; border-radius: 16px 16px 4px 16px; }
   .msg.mine .bubble .time { color: rgba(255,255,255,.75); }
+  .msg.mention .bubble { box-shadow: 0 0 0 2px var(--accent2), 0 6px 20px rgba(255,154,60,.25); }
+  #users .person { cursor: pointer; }
+  .range { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
   .msg.cont .ava { visibility: hidden; }
   .msg.cont .who { display: none; }
   .msg.sys { justify-content: center; }
@@ -738,6 +741,7 @@ async function renderRoom(roomId) {
             <button class="btn ghost small" id="syncBtn" title="Синхронизироваться с администратором">🔄 <span>Синхр.</span></button>
             <button class="btn ghost icon" id="cdBtn" title="Старт с отсчётом 3-2-1">⏱</button>
             <button class="btn ghost icon" id="lightsBtn" title="Свет в зале (L)">💡</button>
+            <button class="btn ghost icon" id="soundBtn" title="Звук чата (M)">🔔</button>
             <button class="btn ghost icon on" id="chatBtn" title="Показать или скрыть чат (C)">💬</button>
             <button class="btn ghost icon" id="fsBtn" title="Полный экран с чатом (F)">⛶</button>
             <button class="btn ghost icon" onclick="openPicker()" title="Сменить фильм">🎬</button>
@@ -770,6 +774,7 @@ async function renderRoom(roomId) {
   // ушли на главную сами — значит, не «случайно закрыли», предлагать вернуться не нужно
   document.querySelector(".logo").addEventListener("click", () => store.set("kv_watching", ""));
   let soundOn = store.get("kv_sound", "1") === "1";
+  let volume = Math.min(100, Math.max(5, +store.get("kv_volume", "60") || 60));
 
   const send = body => fetch(`/api/room/${roomId}/action`, { method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -790,13 +795,17 @@ async function renderRoom(roomId) {
     if (seenChat.has(ck)) return;
     seenChat.add(ck);
     const mine = m.name === name, box = $("#msgs"), el = document.createElement("div");
-    el.className = "msg" + (mine ? " mine" : "") + (lastAuthor === m.name ? " cont" : "");
+    // история, присланная при входе, не звенит — только свежие сообщения
+    const fresh = !m.ts || Date.now() / 1000 - m.ts < 15, mention = !mine && mentionsMe(m.text);
+    el.className = "msg" + (mine ? " mine" : "") + (lastAuthor === m.name ? " cont" : "") + (mention ? " mention" : "");
     el.innerHTML = `${avatar(m.name)}<div class="bubble"><div class="who" style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</div>` +
       `${esc(m.text)}<span class="time">${fmtTime(m.ts)}</span></div>`;
     lastAuthor = m.name;
     box.appendChild(el); box.scrollTop = box.scrollHeight;
-    if (!mine && isFs() && roomEl.classList.contains("nochat")) fsNote(m);
-    if (!mine) { ping(); if (document.hidden) { unread++; document.title = `(${unread}) Комната · КиноВместе`; } }
+    if (mine || !fresh) return;
+    if (isFs() && roomEl.classList.contains("nochat")) fsNote(m);
+    ping(mention ? "mention" : "msg");
+    if (document.hidden) { unread++; document.title = `(${mention ? "@" : unread}) Комната · КиноВместе`; }
   }
   function addSys(text) {
     const box = $("#msgs"), el = document.createElement("div");
@@ -805,17 +814,59 @@ async function renderRoom(roomId) {
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { unread = 0; document.title = "Комната · КиноВместе"; } });
 
-  // мягкий «бульк» на новое сообщение (без файлов — Web Audio)
-  let actx;
-  function ping() {
-    if (!soundOn) return;
+  // упомянули меня: «@Имя» или просто имя отдельным словом
+  function mentionsMe(text) {
+    const n = name.toLowerCase().trim(), t = String(text).toLowerCase();
+    if (n.length < 2) return false;
+    if (t.includes("@" + n)) return true;
+    const re = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${re}($|[^\\p{L}\\p{N}])`, "u").test(t);
+  }
+
+  // мягкий звук на новое сообщение (без файлов — Web Audio); упоминание звучит звонче
+  let actx, lastPing = 0;
+  function audio() {
+    try { actx ||= new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+    if (actx.state === "suspended") actx.resume().catch(() => {});
+    return actx;
+  }
+  // iPhone и Safari разрешают звук только после касания — «разблокируем» его первым нажатием
+  function unlockAudio() {
+    const a = audio();
+    if (!a) return;
+    try { const src = a.createBufferSource(); src.buffer = a.createBuffer(1, 1, 22050); src.connect(a.destination); src.start(0); } catch {}
+    if (a.state === "running") ["pointerdown", "touchend", "keydown"].forEach(ev => removeEventListener(ev, unlockAudio, true));
+  }
+  ["pointerdown", "touchend", "keydown"].forEach(ev => addEventListener(ev, unlockAudio, true));
+
+  function ping(kind = "msg") {
+    if (!soundOn && kind !== "test") return;
+    const now = Date.now();
+    if (kind === "msg" && now - lastPing < 700) return;  // поток сообщений не превращается в трель
+    lastPing = now;
+    const a = audio();
+    if (!a || a.state !== "running") return;
+    // две ноты — обычное сообщение, три повыше — упоминание
+    const notes = kind === "mention" ? [[784, 0], [1047, .1], [1319, .2]] : [[659, 0], [988, .09]];
+    const peak = .22 * (volume / 100) ** 1.6 * (kind === "mention" ? 1.25 : 1);
     try {
-      actx ||= new (window.AudioContext || window.webkitAudioContext)();
-      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
-      o.type = "sine"; o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(1320, t + .08);
-      g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.08, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .25);
-      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + .26);
+      for (const [f, d] of notes) {
+        const o = a.createOscillator(), g = a.createGain(), t = a.currentTime + d;
+        o.type = "sine"; o.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + .015);
+        g.gain.exponentialRampToValueAtTime(.0001, t + .38);
+        o.connect(g).connect(a.destination); o.start(t); o.stop(t + .4);
+      }
     } catch {}
+  }
+  function setSound(on) {
+    soundOn = on;
+    store.set("kv_sound", on ? "1" : "0");
+    $("#soundBtn").textContent = on ? "🔔" : "🔕";
+    $("#soundBtn").classList.toggle("on", !on);
+    toast(on ? "🔔 Звук чата включён" : "🔕 Звук чата выключен");
+    if (on) ping("test");
+    if ($("#settingsModal").classList.contains("open")) renderSettings();
   }
 
   // ---- права ----
@@ -832,6 +883,14 @@ async function renderRoom(roomId) {
   };
 
   let users = [];
+  // нажали на человека в списке — подставляем «@Имя» в сообщение
+  $("#users").onclick = e => {
+    const p = e.target.closest(".person");
+    if (!p || p.title === name) return;
+    const inp = isFs() && roomEl.classList.contains("nochat") ? (quickChat(), $("#fsIn")) : $("#chatin");
+    inp.value = (inp.value.trim() ? inp.value.trimEnd() + " " : "") + "@" + p.title + " ";
+    inp.focus();
+  };
   function renderUsers() {
     const admin = lastState?.admin;
     $("#users").innerHTML = users.map(u => `<span class="person" title="${esc(u)}">${avatar(u, u === admin)}${esc(u)}${u === name ? ' <span class="muted">(вы)</span>' : ""}</span>`).join("");
@@ -856,8 +915,10 @@ async function renderRoom(roomId) {
           <button class="btn small">Сохранить</button></form>
       </div>
       <div class="sgroup"><h4>Атмосфера</h4>
-        <label class="srow"><span class="txt">Звук новых сообщений</span>
+        <label class="srow"><span class="txt">Звук новых сообщений<small>Когда вас упоминают (@имя), звук звонче · 🔔 или <span class="kbd">M</span> — быстро выключить</small></span>
           <span class="switch"><input type="checkbox" id="soundSw" ${soundOn ? "checked" : ""}><span></span></span></label>
+        <div class="srow"><span class="txt" style="flex:none">Громкость</span>
+          <input type="range" class="range" id="volSl" min="5" max="100" step="5" value="${volume}" aria-label="Громкость звука чата"></div>
         <label class="srow"><span class="txt">Свет в зале выключен<small>Всё вокруг плеера гаснет</small></span>
           <span class="switch"><input type="checkbox" id="lightsSw" ${$("#room").classList.contains("dark") ? "checked" : ""}><span></span></span></label>
       </div>
@@ -868,11 +929,12 @@ async function renderRoom(roomId) {
       <div class="sgroup"><h4>Горячие клавиши</h4>
         <div class="muted" style="font-size:13px;line-height:2"><span class="kbd">1</span>–<span class="kbd">8</span> реакции ·
           <span class="kbd">L</span> свет · <span class="kbd">F</span> полный экран · <span class="kbd">C</span> скрыть чат ·
-          <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
+          <span class="kbd">M</span> звук чата · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно</div>
       </div>`;
     $("#everyone").onchange = e => send({ type: "mode", everyone: e.target.checked });
     $("#renameForm").onsubmit = e => { e.preventDefault(); rename($("#renameInput").value); };
-    $("#soundSw").onchange = e => { soundOn = e.target.checked; store.set("kv_sound", soundOn ? "1" : "0"); if (soundOn) ping(); };
+    $("#soundSw").onchange = e => setSound(e.target.checked);
+    $("#volSl").onchange = e => { volume = +e.target.value; store.set("kv_volume", String(volume)); ping("test"); };
     $("#lightsSw").onchange = () => toggleLights();
     $("#copy2").onclick = copyInvite;
   }
@@ -892,6 +954,8 @@ async function renderRoom(roomId) {
     toast(on ? "🌙 Свет в зале погашен" : "💡 Свет включён");
   }
   $("#lightsBtn").onclick = toggleLights;
+  $("#soundBtn").onclick = () => setSound(!soundOn);
+  if (!soundOn) { $("#soundBtn").textContent = "🔕"; $("#soundBtn").classList.add("on"); }
   // полный экран: если браузер не умеет Fullscreen API (iPhone), растягиваем комнату на весь экран сами
   const roomEl = $("#room");
   const isFs = () => roomEl.classList.contains("fs");
@@ -1296,6 +1360,7 @@ async function renderRoom(roomId) {
     if (e.key === "Escape" && isFs()) return setFs(false);
     if (/^[1-8]$/.test(e.key)) send({ type: "react", emoji: EMOJI[+e.key - 1] });
     else if (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "д") toggleLights();
+    else if (e.key.toLowerCase() === "m" || e.key.toLowerCase() === "ь") setSound(!soundOn);
     else if (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "а") setFs(!isFs());
     else if ((e.key.toLowerCase() === "c" || e.key.toLowerCase() === "с") && isFs()) toggleChat();
     else if (e.key === "Enter") {
