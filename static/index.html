@@ -171,7 +171,23 @@
     line-height: 1; transition: transform .2s cubic-bezier(.3,1.8,.5,1), background .2s; }
   .reactbar button:hover { transform: scale(1.3) translateY(-2px); background: var(--panel2); }
   .reactbar button:active { transform: scale(.9); }
-  .tools { display: flex; gap: 6px; }
+  .tools { display: flex; gap: 6px; position: relative; }
+  /* меню «Ещё»: редкие функции собраны в одну кнопку */
+  .menu { position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 20; width: 270px; padding: 6px; border-radius: 16px;
+    background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px); display: none; flex-direction: column; gap: 2px; transform-origin: bottom right; }
+  .menu.open { display: flex; animation: menuIn .18s cubic-bezier(.2,1.2,.4,1); }
+  @keyframes menuIn { from { opacity: 0; transform: scale(.92) translateY(6px); } }
+  .room.fs .menu { bottom: auto; top: calc(100% + 10px); transform-origin: top right; }
+  .menu.left { right: auto; left: 0; transform-origin: bottom left; }
+  .room.fs .menu.left { transform-origin: top left; }
+  .mitem { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 11px; background: none;
+    cursor: pointer; text-align: left; font-weight: 600; transition: background .15s; }
+  .mitem:hover { background: var(--panel3); }
+  .mitem .mi { width: 22px; text-align: center; font-size: 18px; }
+  .mitem .ml { flex: 1; white-space: nowrap; }
+  .mitem.on { background: rgba(139,92,246,.18); color: #ddd6fe; }
+  #moreBtn.on { background: var(--violet); border-color: var(--violet); }
 
   .floater { position: absolute; bottom: 70px; font-size: 44px; pointer-events: none; z-index: 5; text-align: center;
     animation: floatUp 3s cubic-bezier(.2,.7,.3,1) forwards; filter: drop-shadow(0 4px 12px rgba(0,0,0,.5)); }
@@ -808,13 +824,16 @@ async function renderRoom(roomId) {
           <div class="reactbar" id="reactbar"></div>
           <div class="tools">
             <button class="btn ghost small" id="syncBtn" title="Синхронизироваться с администратором">🔄 <span>Синхр.</span></button>
-            <button class="btn ghost icon" id="cdBtn" title="Старт с отсчётом 3-2-1">⏱</button>
-            <button class="btn ghost icon" id="breakBtn" title="Перерыв с таймером (B)">☕</button>
-            <button class="btn ghost icon" id="lightsBtn" title="Свет в зале (L)">💡</button>
-            <button class="btn ghost icon" id="soundBtn" title="Звук чата (M)">🔔</button>
             <button class="btn ghost icon on" id="chatBtn" title="Показать или скрыть чат (C)">💬</button>
             <button class="btn ghost icon" id="fsBtn" title="Полный экран с чатом (F)">⛶</button>
-            <button class="btn ghost icon" onclick="openPicker()" title="Сменить фильм">🎬</button>
+            <button class="btn ghost icon" id="moreBtn" title="Ещё функции" aria-haspopup="true" aria-expanded="false">⋯</button>
+            <div class="menu" id="moreMenu" role="menu">
+              <button class="mitem" onclick="openPicker()"><span class="mi">🎬</span><span class="ml">Сменить фильм</span></button>
+              <button class="mitem" id="cdBtn"><span class="mi">⏱</span><span class="ml">Старт с отсчётом 3-2-1</span></button>
+              <button class="mitem" id="breakBtn"><span class="mi">☕</span><span class="ml">Перерыв с таймером</span><span class="kbd">B</span></button>
+              <button class="mitem" id="lightsBtn"><span class="mi">💡</span><span class="ml">Свет в зале</span><span class="kbd">L</span></button>
+              <button class="mitem" id="soundBtn"><span class="mi">🔔</span><span class="ml">Звук чата</span><span class="kbd">M</span></button>
+            </div>
           </div>
         </div>
       </section>
@@ -973,7 +992,7 @@ async function renderRoom(roomId) {
   function setSound(on) {
     soundOn = on;
     store.set("kv_sound", on ? "1" : "0");
-    $("#soundBtn").textContent = on ? "🔔" : "🔕";
+    $("#soundBtn .mi").textContent = on ? "🔔" : "🔕";
     $("#soundBtn").classList.toggle("on", !on);
     toast(on ? "🔔 Звук чата включён" : "🔕 Звук чата выключен");
     if (on) ping("test");
@@ -1107,7 +1126,20 @@ async function renderRoom(roomId) {
   }
   $("#lightsBtn").onclick = toggleLights;
   $("#soundBtn").onclick = () => setSound(!soundOn);
-  if (!soundOn) { $("#soundBtn").textContent = "🔕"; $("#soundBtn").classList.add("on"); }
+  if (!soundOn) { $("#soundBtn .mi").textContent = "🔕"; $("#soundBtn").classList.add("on"); }
+  // меню «Ещё»: открывается одной кнопкой, закрывается после выбора, кликом мимо или Esc
+  const menu = $("#moreMenu");
+  function setMenu(open) {
+    // кнопки стоят у левого края (телефон, узкое окно) — раскрываем меню вправо
+    if (open) menu.classList.toggle("left", $("#moreBtn").getBoundingClientRect().right < 290);
+    menu.classList.toggle("open", open);
+    $("#moreBtn").classList.toggle("on", open);
+    $("#moreBtn").setAttribute("aria-expanded", open);
+  }
+  $("#moreBtn").onclick = e => { e.stopPropagation(); setMenu(!menu.classList.contains("open")); };
+  menu.addEventListener("click", e => { if (e.target.closest(".mitem")) setMenu(false); });
+  document.addEventListener("click", e => { if (!e.target.closest("#moreMenu, #moreBtn")) setMenu(false); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && menu.classList.contains("open")) { e.stopPropagation(); setMenu(false); } }, true);
   // полный экран: если браузер не умеет Fullscreen API (iPhone), растягиваем комнату на весь экран сами
   const roomEl = $("#room");
   const isFs = () => roomEl.classList.contains("fs");
