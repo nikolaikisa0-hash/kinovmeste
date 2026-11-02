@@ -322,6 +322,12 @@ export class Room extends DurableObject {
              admin: [...this.clients.values()].find(c => c.admin)?.name ?? null };
   }
 
+  // время из запроса; пустое или неверное значение не должно отматывать всех в начало
+  positionFrom(body) {
+    const v = body.position;
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : this.currentPosition();
+  }
+
   isAdmin(key) {
     return Boolean(key) && key === this.adminKey;
   }
@@ -403,26 +409,26 @@ export class Room extends DurableObject {
       this.position = 0;
       sysMsg = `${name} включил(а) «${this.movie.title}»`;
     } else if (t === "play") {
-      this.position = Number(body.position ?? this.currentPosition());
+      this.position = this.positionFrom(body);
       this.playing = true;
       sysMsg = `${name}: ▶ пуск`;
     } else if (t === "pause") {
-      this.position = Number(body.position ?? this.currentPosition());
+      this.position = this.positionFrom(body);
       this.playing = false;
       sysMsg = `${name}: ⏸ пауза`;
     } else if (t === "seek") {
-      this.position = Number(body.position) || 0;
+      this.position = this.positionFrom(body);
     } else if (t === "syncreq") {
       // зритель просит администратора прислать своё точное время
       this.broadcast({ type: "syncreq", name });
       return;
     } else if (t === "sync") {
-      this.position = Number(body.position ?? this.currentPosition());
+      this.position = this.positionFrom(body);
       this.playing = Boolean(body.playing);
       sysMsg = `🔄 Все синхронизированы по ${name}`;
     } else if (t === "countdown") {
       // общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
-      this.position = Number(body.position ?? this.currentPosition());
+      this.position = this.positionFrom(body);
       this.playing = false;
       this.broadcast({ type: "countdown", name });
       sysMsg = `${name} запустил(а) обратный отсчёт ⏱`;

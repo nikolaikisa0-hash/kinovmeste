@@ -7,6 +7,7 @@
 """
 import html
 import json
+import math
 import os
 import queue
 import re
@@ -379,6 +380,14 @@ def get_room(rid):
 REACTIONS = {"😂", "😱", "❤️", "👍", "🔥", "😢", "🍿", "👏"}
 
 
+def position_from(body, room):
+    """Время из запроса; пустое или неверное значение не должно отматывать всех в начало."""
+    v = body.get("position")
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0:
+        return float(v)
+    return room.current_position()
+
+
 class Forbidden(Exception):
     pass
 
@@ -405,27 +414,27 @@ def room_action(room, body):
             room.position = 0.0
             sys_msg = f"{name} включил(а) «{room.movie['title']}»"
         elif t == "play":
-            room.position = float(body.get("position", room.current_position()))
+            room.position = position_from(body, room)
             room.playing = True
             sys_msg = f"{name}: ▶ пуск"
         elif t == "pause":
-            room.position = float(body.get("position", room.current_position()))
+            room.position = position_from(body, room)
             room.playing = False
             sys_msg = f"{name}: ⏸ пауза"
         elif t == "seek":
-            room.position = float(body.get("position", 0))
+            room.position = position_from(body, room)
             sys_msg = None
         elif t == "syncreq":
             # зритель просит администратора прислать своё точное время
             room.broadcast({"type": "syncreq", "name": name})
             return
         elif t == "sync":
-            room.position = float(body.get("position", room.current_position()))
+            room.position = position_from(body, room)
             room.playing = bool(body.get("playing"))
             sys_msg = f"🔄 Все синхронизированы по {name}"
         elif t == "countdown":
             # общий отсчёт «3-2-1»: ставим на паузу, а запуск пришлёт тот, кто начал отсчёт
-            room.position = float(body.get("position", room.current_position()))
+            room.position = position_from(body, room)
             room.playing = False
             room.broadcast({"type": "countdown", "name": name})
             sys_msg = f"{name} запустил(а) обратный отсчёт ⏱"

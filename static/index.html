@@ -741,7 +741,10 @@ async function renderRoom(roomId) {
   const emit = type => {
     if (applying || !player) return;
     if (!canControl()) { toast("Сейчас просмотром управляет только администратор 👑"); return revert(); }
-    send({ type, position: player.time() });
+    const t = player.time();
+    // плеер не знает время или вдруг говорит «0» посреди фильма — не отматываем всех в начало
+    const sane = Number.isFinite(t) && !(t < 1 && type !== "seek" && lastState?.movie && expected() > 5);
+    send(sane ? { type, position: t } : { type });
   };
 
   let users = [];
@@ -865,7 +868,11 @@ async function renderRoom(roomId) {
   // 🔄 синхронизация: зритель подтягивается к администратору, администратор — всех к себе
   $("#syncBtn").onclick = () => {
     if (!player || !lastState?.movie) return toast("Сначала выберите фильм 🎬");
-    if (amAdmin) { send({ type: "sync", position: player.time(), playing: !player.paused() }); return toast("🔄 Подтягиваем всех к вам"); }
+    if (amAdmin) {
+      const t = player.time();
+      if (Number.isFinite(t)) send({ type: "sync", position: t, playing: !player.paused() });
+      return toast("🔄 Подтягиваем всех к вам");
+    }
     resync();
     if (lastState.admin) { send({ type: "syncreq" }); toast("🔄 Синхронизируемся с администратором…"); }
     else toast("🔄 Синхронизировано с комнатой");
@@ -884,7 +891,7 @@ async function renderRoom(roomId) {
   $("#cdBtn").onclick = async () => {
     if (!player) return toast("Сначала выберите фильм 🎬");
     if (!canControl()) return toast("Сейчас просмотром управляет только администратор 👑");
-    const pos = player.time();
+    const t = player.time(), pos = Number.isFinite(t) ? t : expected();
     const r = await send({ type: "countdown", position: pos }).then(r => r.json());
     if (r.ok) setTimeout(() => send({ type: "play", position: pos }), 3000);  // запуск ровно после «1»
   };
@@ -978,7 +985,7 @@ async function renderRoom(roomId) {
       }, 1000);
     });
     return {
-      time: () => ready ? yt.getCurrentTime() : 0,
+      time: () => ready ? yt.getCurrentTime() : null,
       paused: () => !ready || ![YT.PlayerState.PLAYING, YT.PlayerState.BUFFERING].includes(yt.getPlayerState()),
       seek: t => { if (!ready) return; remoteSeekUntil = Date.now() + 2500; lastT = t; yt.seekTo(t, true); },
       play: () => { if (ready) yt.playVideo(); return Promise.resolve(); },
@@ -997,9 +1004,9 @@ async function renderRoom(roomId) {
   // Плеер Rutube: команды и события через postMessage
   function rutubePlayer(movie) {
     const frame = embedFrame(movie);
-    let ready = false, playing = false, t = 0, tAt = Date.now(), remoteSeekUntil = 0, seekTimer;
+    let ready = false, playing = false, t = null, tAt = Date.now(), remoteSeekUntil = 0, seekTimer;
     const cmd = (type, data = {}) => frame.contentWindow?.postMessage(JSON.stringify({ type, data }), "*");
-    const now = () => t + (playing ? (Date.now() - tAt) / 1000 : 0);
+    const now = () => t == null ? null : t + (playing ? (Date.now() - tAt) / 1000 : 0);
     function onMessage(e) {
       if (e.source !== frame.contentWindow) return;
       let m;
@@ -1008,7 +1015,8 @@ async function renderRoom(roomId) {
         ready = true;
         if (lastState) applyState({ ...lastState, position: expected() });
       } else if (m?.type === "player:currentTime") {
-        t = m.data.time; tAt = Date.now();
+        const nt = m.data?.time ?? m.data?.currentTime;
+        if (Number.isFinite(nt)) { t = nt; tAt = Date.now(); }
       } else if (m?.type === "player:changeState") {
         const st = m.data.state;
         if (st === "playing") playing = true;
@@ -1054,16 +1062,18 @@ async function renderRoom(roomId) {
     Promise.all([loadVK(), loaded]).then(() => {
       if (dead) return;
       p = VK.VideoPlayer(frame);
-      p.on("inited", () => { ready = true; if (lastState) applyState({ ...lastState, position: expected() }); });
-      const onPlay = () => { if (!applying && lastState && !lastState.playing) emit("play"); };
+      const markReady = () => { if (!ready) { ready = true; if (lastState) applyState({ ...lastState, position: expected() }); } };
+      p.on("inited", markReady);
+      p.on("timeupdate", markReady);
+      const onPlay = () => { markReady(); if (!applying && lastState && !lastState.playing) emit("play"); };
       p.on("started", onPlay);
       p.on("resumed", onPlay);
-      p.on("paused", () => { if (!applying && lastState?.playing) emit("pause"); });
+      p.on("paused", () => { markReady(); if (!applying && lastState?.playing) emit("pause"); });
       p.on("seeked", () => { if (!applying && Date.now() > remoteSeekUntil) emit("seek"); });
       p.on("error", () => toast("VK не даёт воспроизвести это видео здесь: оно закрыто или запрещено к встраиванию"));
     }).catch(() => toast("Не удалось загрузить плеер VK"));
     return {
-      time: () => ready ? p.getCurrentTime() : 0,
+      time: () => ready ? p.getCurrentTime() : null,
       paused: () => !ready || p.getState() !== "playing",
       seek: s => { if (!ready) return; remoteSeekUntil = Date.now() + 2500; p.seek(s); },
       play: () => { if (ready) p.play(); return Promise.resolve(); },
@@ -1092,11 +1102,12 @@ async function renderRoom(roomId) {
     ensurePlayer(s.movie);
     applying = true;
     try {
-      const drift = player.time() - s.position;
+      const cur = player.time();
+      const drift = Number.isFinite(cur) ? cur - s.position : Infinity;
       // на паузе выравниваем точно, во время просмотра — только заметное отставание
       if (Math.abs(drift) > (s.playing && !exact ? 1.5 : 0.3)) player.seek(s.position);
       // небольшое расхождение догоняем скоростью, без рывков
-      player.rate(!s.playing || Math.abs(drift) < 0.3 || Math.abs(drift) > 1.5 ? 1 : drift > 0 ? 0.95 : 1.05);
+      player.rate(!s.playing || !(Math.abs(drift) >= 0.3 && Math.abs(drift) <= 1.5) ? 1 : drift > 0 ? 0.95 : 1.05);
       if (s.playing && player.paused()) {
         await player.play().catch(() => toast("Нажмите ▶, чтобы присоединиться к просмотру"));
       } else if (!s.playing && !player.paused()) player.pause();
@@ -1130,7 +1141,8 @@ async function renderRoom(roomId) {
       else if (m.type === "countdown") showCountdown();
       else if (m.type === "syncreq" && amAdmin && player) {
         // администратор отвечает своим точным временем
-        send({ type: "sync", position: player.time(), playing: !player.paused() });
+        const t = player.time();
+        if (Number.isFinite(t)) send({ type: "sync", position: t, playing: !player.paused() });
       }
     };
     es.onerror = () => {
