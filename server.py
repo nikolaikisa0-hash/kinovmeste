@@ -193,9 +193,59 @@ def youtube_info(vid):
             "source": "youtube", "ytId": vid, "url": watch, "subs": []}
 
 
+RUTUBE_ID = re.compile(r"^[0-9a-f]{32}$")
+VK_KEY = re.compile(r"^(-?\d{1,12})_(\d{1,12})(?:_([0-9a-f]{1,32}))?$")
+
+
+def rutube_info(rid):
+    if not RUTUBE_ID.match(rid):
+        return None
+    try:
+        meta = fetch_json("https://rutube.ru/api/oembed/?format=json&url=" +
+                          urllib.parse.quote("https://rutube.ru/video/%s/" % rid), ttl=86400)
+    except Exception:  # noqa: BLE001
+        return None
+    return {"id": "rt:" + rid, "title": meta.get("title", "Видео Rutube"), "year": "",
+            "description": "Rutube · " + meta.get("author_name", ""), "thumb": meta.get("thumbnail_url"),
+            "source": "rutube", "embed": "https://rutube.ru/play/embed/" + rid,
+            "url": "https://rutube.ru/video/%s/" % rid, "subs": []}
+
+
+def vk_info(key):
+    # VK отдаёт сведения о видео только браузеру, поэтому название общее
+    m = VK_KEY.match(key)
+    if not m:
+        return None
+    oid, vid, vhash = m.groups()
+    embed = "https://vkvideo.ru/video_ext.php?oid=%s&id=%s&js_api=1" % (oid, vid)
+    if vhash:
+        embed += "&hash=" + vhash
+    return {"id": "vk:" + key, "title": "Видео VK", "year": "",
+            "description": "VK Видео · video%s_%s" % (oid, vid),
+            "source": "vk", "embed": embed, "url": "https://vkvideo.ru/video%s_%s" % (oid, vid), "subs": []}
+
+
+def info_from_link(link):
+    """Ссылка на YouTube, Rutube или VK Видео -> данные для комнаты."""
+    m = re.search(r"rutube\.ru/(?:video|play/embed|shorts)/([0-9a-f]{32})", link)
+    if m:
+        return rutube_info(m.group(1))
+    m = (re.search(r"oid=(-?\d+)&(?:amp;)?id=(\d+)", link) or
+         re.search(r"(?:vk\.com|vkvideo\.ru|vk\.ru)/.*?video(-?\d+)_(\d+)", link))
+    if m:
+        h = re.search(r"hash=([0-9a-f]+)", link)
+        return vk_info("%s_%s" % m.groups() + ("_" + h.group(1) if h else ""))
+    vid = youtube_id_from_link(link)
+    return vid and youtube_info(vid)
+
+
 def movie_info(ident):
     if ident.startswith("yt:"):
         return youtube_info(ident[3:])
+    if ident.startswith("rt:"):
+        return rutube_info(ident[3:])
+    if ident.startswith("vk:"):
+        return vk_info(ident[3:])
     data = fetch_json("https://archive.org/metadata/" + urllib.parse.quote(ident), ttl=3600)
     files = data.get("files", [])
     meta = data.get("metadata", {})
@@ -333,7 +383,7 @@ def room_action(room, body):
             raise ValueError("у этого фильма нет видеофайла")
     with room.lock:
         if t == "load":
-            room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "subs", "source", "ytId")}
+            room.movie = {k: info.get(k) for k in ("id", "title", "year", "url", "subs", "source", "ytId", "embed")}
             room.playing = False
             room.position = 0.0
             sys_msg = f"{name} включил(а) «{room.movie['title']}»"
@@ -422,11 +472,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/yt/search":
                 return self.send_json(youtube_search(qs.get("q", [""])[0], qs.get("page", [""])[0]))
             if p == "/api/link":
-                vid = youtube_id_from_link(qs.get("url", [""])[0].strip())
-                info = vid and youtube_info(vid)
+                info = info_from_link(qs.get("url", [""])[0].strip())
                 if not info:
-                    return self.send_json({"error": "Не получилось открыть ссылку: нужна ссылка на видео YouTube, "
-                                                    "которое разрешено встраивать"}, 404)
+                    return self.send_json({"error": "Не получилось открыть ссылку: нужна ссылка на видео "
+                                                    "YouTube, VK Видео или Rutube"}, 404)
                 return self.send_json(info)
             if p.startswith("/api/movie/"):
                 info = movie_info(urllib.parse.unquote(p[len("/api/movie/"):]))

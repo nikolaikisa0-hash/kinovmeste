@@ -171,8 +171,52 @@ function subtitleLabel(name) {
   return asr ? "English (авто)" : name.split("/").pop();
 }
 
+const RUTUBE_ID = /^[0-9a-f]{32}$/;
+const VK_KEY = /^(-?\d{1,12})_(\d{1,12})(?:_([0-9a-f]{1,32}))?$/;
+
+async function rutubeInfo(rid) {
+  if (!RUTUBE_ID.test(rid)) return null;
+  let meta;
+  try {
+    meta = await fetchJson("https://rutube.ru/api/oembed/?format=json&url=" +
+                           encodeURIComponent(`https://rutube.ru/video/${rid}/`), 86400);
+  } catch {
+    return null;
+  }
+  return { id: "rt:" + rid, title: meta.title || "Видео Rutube", year: "",
+           description: "Rutube · " + (meta.author_name || ""), thumb: meta.thumbnail_url,
+           source: "rutube", embed: "https://rutube.ru/play/embed/" + rid,
+           url: `https://rutube.ru/video/${rid}/`, subs: [] };
+}
+
+function vkInfo(key) {
+  // VK отдаёт сведения о видео только браузеру, поэтому название общее
+  const m = key.match(VK_KEY);
+  if (!m) return null;
+  const [, oid, vid, hash] = m;
+  let embed = `https://vkvideo.ru/video_ext.php?oid=${oid}&id=${vid}&js_api=1`;
+  if (hash) embed += "&hash=" + hash;
+  return { id: "vk:" + key, title: "Видео VK", year: "", description: `VK Видео · video${oid}_${vid}`,
+           source: "vk", embed, url: `https://vkvideo.ru/video${oid}_${vid}`, subs: [] };
+}
+
+async function infoFromLink(link) {
+  // Ссылка на YouTube, Rutube или VK Видео -> данные для комнаты
+  let m = link.match(/rutube\.ru\/(?:video|play\/embed|shorts)\/([0-9a-f]{32})/);
+  if (m) return rutubeInfo(m[1]);
+  m = link.match(/oid=(-?\d+)&(?:amp;)?id=(\d+)/) || link.match(/(?:vk\.com|vkvideo\.ru|vk\.ru)\/.*?video(-?\d+)_(\d+)/);
+  if (m) {
+    const h = link.match(/hash=([0-9a-f]+)/);
+    return vkInfo(`${m[1]}_${m[2]}` + (h ? "_" + h[1] : ""));
+  }
+  const vid = youtubeIdFromLink(link);
+  return vid ? youtubeInfo(vid) : null;
+}
+
 async function movieInfo(ident) {
   if (ident.startsWith("yt:")) return youtubeInfo(ident.slice(3));
+  if (ident.startsWith("rt:")) return rutubeInfo(ident.slice(3));
+  if (ident.startsWith("vk:")) return vkInfo(ident.slice(3));
   const data = await fetchJson("https://archive.org/metadata/" + encodeURIComponent(ident), 3600);
   const files = data.files || [], meta = data.metadata || {};
   const score = f => {
@@ -329,7 +373,7 @@ export class Room extends DurableObject {
       // данные фильма берём с источника сами, а не доверяем клиенту
       const info = await movieInfo(String(body.id || ""));
       if (!info) throw new Error("у этого фильма нет видеофайла");
-      this.movie = Object.fromEntries(["id", "title", "year", "url", "subs", "source", "ytId"]
+      this.movie = Object.fromEntries(["id", "title", "year", "url", "subs", "source", "ytId", "embed"]
         .map(k => [k, info[k] ?? null]));
       this.playing = false;
       this.position = 0;
@@ -388,10 +432,9 @@ export default {
       }
       if (p === "/api/yt/search") return json(await youtubeSearch(env, qs.get("q") || "", qs.get("page") || ""));
       if (p === "/api/link") {
-        const vid = youtubeIdFromLink((qs.get("url") || "").trim());
-        const info = vid && await youtubeInfo(vid);
-        if (!info) return json({ error: "Не получилось открыть ссылку: нужна ссылка на видео YouTube, " +
-                                        "которое разрешено встраивать" }, 404);
+        const info = await infoFromLink((qs.get("url") || "").trim());
+        if (!info) return json({ error: "Не получилось открыть ссылку: нужна ссылка на видео " +
+                                        "YouTube, VK Видео или Rutube" }, 404);
         return json(info);
       }
       if (p.startsWith("/api/movie/")) {

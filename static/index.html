@@ -140,8 +140,9 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const poster = m => m.thumb || (m.id.startsWith("yt:") ? `https://i.ytimg.com/vi/${m.id.slice(3)}/hqdefault.jpg`
-  : `https://archive.org/services/img/${encodeURIComponent(m.id)}`);
+const poster = m => m.thumb
+  || (m.id.startsWith("yt:") ? `https://i.ytimg.com/vi/${m.id.slice(3)}/hqdefault.jpg`
+  : m.id.includes(":") ? "" : `https://archive.org/services/img/${encodeURIComponent(m.id)}`);
 
 const GENRES = [["", "Все"], ["soviet","🇷🇺 Советское кино"], ["cartoons","Мультфильмы"], ["horror","Ужасы"], ["comedy","Комедии"], ["scifi","Фантастика"],
   ["noir","Нуар"], ["crime","Детективы"], ["western","Вестерны"], ["drama","Драмы"],
@@ -184,7 +185,7 @@ function Catalog(container, onPick) {
       </select>
     </div>
     <div class="controls linkrow">
-      <input class="link" placeholder="…или вставьте ссылку на фильм на YouTube">
+      <input class="link" placeholder="…или вставьте ссылку: VK Видео, Rutube или YouTube">
       <button class="btn ghost linkbtn">Открыть</button>
     </div>
     <div class="chips genres">${GENRES.map(([k,v]) => `<span class="chip${k===""?" on":""}" data-g="${k}">${v}</span>`).join("")}</div>
@@ -234,7 +235,7 @@ function Catalog(container, onPick) {
         r = await fetch("/api/yt/search?" + new URLSearchParams({ q: st.q, page: st.token || "" })).then(r => r.json());
         if (r.error === "nokey") {
           info.innerHTML = "Поиск по YouTube ещё не настроен владельцем сайта (нужен YOUTUBE_API_KEY). " +
-            "Пока можно вставить ссылку на фильм с YouTube в поле выше.";
+            "Пока можно вставить ссылку на видео в поле выше.";
           return;
         }
       } else {
@@ -264,7 +265,7 @@ function Catalog(container, onPick) {
 
 function showDetail(m, actions) {
   $("#detailBody").innerHTML = `<div class="detail">
-      <img src="${poster(m)}" alt="" class="${m.thumb || m.ytId ? "wideimg" : ""}">
+      ${poster(m) ? `<img src="${poster(m)}" alt="" class="${m.id.includes(":") ? "wideimg" : ""}">` : ""}
       <div><h2>${esc(m.title)}</h2><div class="muted">${esc([m.year, m.channel].filter(Boolean).join(" · "))}</div>
         <p>${esc(m.description || "Описание отсутствует.")}</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap" id="detailActions"></div></div></div>`;
@@ -282,8 +283,8 @@ function renderHome() {
   $("#app").innerHTML = `<div id="cat"></div>`;
   Catalog($("#cat"), m => showDetail(m, [
     ["▶ Смотреть вместе", () => newRoom(m.id)],
-    m.id.startsWith("yt:")
-      ? ["Открыть на YouTube", () => window.open("https://www.youtube.com/watch?v=" + m.id.slice(3)), true]
+    m.id.includes(":")
+      ? ["Открыть на сайте источника", () => window.open(m.url || "https://www.youtube.com/watch?v=" + m.id.slice(3)), true]
       : ["Открыть на archive.org", () => window.open("https://archive.org/details/" + m.id), true],
   ]));
 }
@@ -430,13 +431,99 @@ function renderRoom(roomId) {
     };
   }
 
+  function embedFrame(movie) {
+    $("#player").innerHTML = `<iframe src="${esc(movie.embed)}" frameborder="0" allowfullscreen
+      allow="autoplay; fullscreen; encrypted-media; picture-in-picture; screen-wake-lock"></iframe>`;
+    return $("#player iframe");
+  }
+
+  // Плеер Rutube: команды и события через postMessage
+  function rutubePlayer(movie) {
+    const frame = embedFrame(movie);
+    let ready = false, playing = false, t = 0, tAt = Date.now(), remoteSeekUntil = 0, seekTimer;
+    const cmd = (type, data = {}) => frame.contentWindow?.postMessage(JSON.stringify({ type, data }), "*");
+    const now = () => t + (playing ? (Date.now() - tAt) / 1000 : 0);
+    function onMessage(e) {
+      if (e.source !== frame.contentWindow) return;
+      let m;
+      try { m = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch { return; }
+      if (m?.type === "player:ready") {
+        ready = true;
+        if (lastState) applyState({ ...lastState, position: expected() });
+      } else if (m?.type === "player:currentTime") {
+        t = m.data.time; tAt = Date.now();
+      } else if (m?.type === "player:changeState") {
+        const st = m.data.state;
+        if (st === "playing") playing = true;
+        if (st === "pause" || st === "paused" || st === "completed") playing = false;
+        if (applying || !lastState) return;
+        // сообщаем только о том, что расходится с состоянием комнаты
+        if (st === "playing" && !lastState.playing) emit("play");
+        if ((st === "pause" || st === "paused") && lastState.playing) emit("pause");
+        if ((st === "seeking" || st === "seeked") && Date.now() > remoteSeekUntil) {
+          clearTimeout(seekTimer);
+          seekTimer = setTimeout(() => emit("seek"), 500);  // ждём, пока придёт новое время
+        }
+      } else if (m?.type === "player:error") {
+        toast("Rutube не даёт воспроизвести это видео здесь — выберите другое");
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return {
+      time: now,
+      paused: () => !ready || !playing,
+      seek: s => { if (!ready) return; remoteSeekUntil = Date.now() + 2500; t = s; tAt = Date.now();
+                   cmd("player:setCurrentTime", { time: s }); },
+      play: () => { if (ready) cmd("player:play"); return Promise.resolve(); },
+      pause: () => { if (ready) cmd("player:pause"); },
+      rate: () => {},
+      destroy: () => { window.removeEventListener("message", onMessage); clearTimeout(seekTimer); },
+    };
+  }
+
+  // Плеер VK Видео через официальный VK.VideoPlayer
+  let vkApi;
+  const loadVK = () => vkApi ||= new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://vk.com/js/api/videoplayer.js";
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+
+  function vkPlayer(movie) {
+    const frame = embedFrame(movie);
+    const loaded = new Promise(res => frame.addEventListener("load", res, { once: true }));
+    let p = null, ready = false, remoteSeekUntil = 0, dead = false;
+    Promise.all([loadVK(), loaded]).then(() => {
+      if (dead) return;
+      p = VK.VideoPlayer(frame);
+      p.on("inited", () => { ready = true; if (lastState) applyState({ ...lastState, position: expected() }); });
+      const onPlay = () => { if (!applying && lastState && !lastState.playing) emit("play"); };
+      p.on("started", onPlay);
+      p.on("resumed", onPlay);
+      p.on("paused", () => { if (!applying && lastState?.playing) emit("pause"); });
+      p.on("seeked", () => { if (!applying && Date.now() > remoteSeekUntil) emit("seek"); });
+      p.on("error", () => toast("VK не даёт воспроизвести это видео здесь: оно закрыто или запрещено к встраиванию"));
+    }).catch(() => toast("Не удалось загрузить плеер VK"));
+    return {
+      time: () => ready ? p.getCurrentTime() : 0,
+      paused: () => !ready || p.getState() !== "playing",
+      seek: s => { if (!ready) return; remoteSeekUntil = Date.now() + 2500; p.seek(s); },
+      play: () => { if (ready) p.play(); return Promise.resolve(); },
+      pause: () => { if (ready) p.pause(); },
+      rate: () => {},
+      destroy: () => { dead = true; p?.destroy(); },
+    };
+  }
+
   function ensurePlayer(movie) {
     $("#nowTitle").textContent = movie.title; $("#nowYear").textContent = movie.year || "";
-    const key = movie.source === "youtube" ? "yt:" + movie.ytId : movie.url;
+    const key = movie.embed || (movie.source === "youtube" ? "yt:" + movie.ytId : movie.url);
     if (key === currentKey) return;
     currentKey = key;
     player?.destroy();
-    player = movie.source === "youtube" ? youtubePlayer(movie) : filePlayer(movie);
+    const make = { youtube: youtubePlayer, rutube: rutubePlayer, vk: vkPlayer }[movie.source] || filePlayer;
+    player = make(movie);
   }
 
   // Применяем состояние сервера, не вызывая ответных событий
