@@ -370,6 +370,7 @@ export class Room extends DurableObject {
     this.breakUntil = null;  // «перерыв на 5 минут»: до какого времени
     this.schedule = null;    // сеанс по расписанию: когда начинаем
     this.title = "";         // название комнаты, например «Пятничное кино»
+    this.pinned = null;      // 📌 закреплённое сообщение: { id, name, text }
     this.banned = {};        // кого выгнали: client_id или «n:имя» -> до какого времени
     this.session = null;     // для «итогов вечера»: { movieId, startedAt, messages, reacts, talk }
     this.timer = null;
@@ -389,7 +390,7 @@ export class Room extends DurableObject {
       updated: this.updated, created: this.created, lastActive: this.lastActive, emptySince: this.emptySince,
       chat: this.chat, adminKey: this.adminKey, everyone: this.everyone,
       proposals: this.proposals, history: this.history, breakUntil: this.breakUntil,
-      schedule: this.schedule, banned: this.banned, session: this.session, title: this.title,
+      schedule: this.schedule, banned: this.banned, session: this.session, title: this.title, pinned: this.pinned,
     });
   }
 
@@ -462,7 +463,7 @@ export class Room extends DurableObject {
   }
 
   extras() {
-    return { type: "extras", proposals: this.proposals, history: this.history };
+    return { type: "extras", proposals: this.proposals, history: this.history, pinned: this.pinned };
   }
 
   // сводка для панели администратора сайта
@@ -624,7 +625,7 @@ export class Room extends DurableObject {
       await this.ctx.storage.deleteAll();
       Object.assign(this, { movie: null, playing: false, position: 0, chat: [], adminKey: null, everyone: true,
                             presence: {}, proposals: [], history: [], breakUntil: null, schedule: null,
-                            banned: {}, session: null, title: "" });
+                            banned: {}, session: null, title: "", pinned: null });
       return { ok: true };
     }
     return { error: "unknown action" };
@@ -839,6 +840,15 @@ export class Room extends DurableObject {
       } else if (t === "unpropose" && p && (admin || p.by === name)) {
         this.proposals = this.proposals.filter(x => x !== p);
       } else return;
+      this.broadcast(this.extras());
+      this.save();
+      return;
+    } else if (t === "pin") {
+      // 📌 закрепить сообщение над чатом (или открепить, если id пустой)
+      if (!admin) throw new Forbidden("Закреплять сообщения может только администратор");
+      const msg = body.id && this.chat.find(m => m.id === body.id);
+      this.pinned = msg ? { id: msg.id, name: msg.name, text: msg.text.slice(0, 300) } : null;
+      if (msg) this.broadcast({ type: "system", text: `📌 ${name} закрепил(а) сообщение` });
       this.broadcast(this.extras());
       this.save();
       return;

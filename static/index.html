@@ -409,6 +409,12 @@
   .alone { margin: 10px 14px 0; padding: 10px 12px; border-radius: 14px; font-size: 13px; background: rgba(255,154,60,.1);
     border: 1px dashed rgba(255,154,60,.4); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .alone[hidden] { display: none; }
+  .pinned { margin: 10px 14px 0; padding: 8px 10px 8px 12px; border-radius: 12px; font-size: 13px; display: flex; gap: 8px; align-items: center;
+    background: rgba(139,92,246,.14); border-left: 3px solid var(--violet); cursor: pointer; }
+  .pinned span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pinned button { border: 0; background: none; color: var(--muted); cursor: pointer; }
+  .pinned[hidden] { display: none; }
+  .room:not(.isadmin) .mact [data-a=pin], .room:not(.isadmin) .pinned button { display: none; }
   .howto { text-align: left; display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
   .howto div { display: flex; gap: 12px; align-items: flex-start; }
   .howto b.n { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; }
@@ -667,6 +673,8 @@ function avatar(name, crown) {
     `${esc(av || [...String(name)][0] || "?")}${crown ? '<span class="crown">👑</span>' : ""}</span>`;
 }
 
+// быстрые подборки для вкладки Rutube (официальные каналы)
+const RUTUBE_PICKS = ["Гайдай", "Рязанов", "Данелия", "Союзмультфильм", "Мосфильм комедия", "Советские сказки", "Военные фильмы", "Детективы"];
 const GENRES = [["", "Все"], ["soviet","🇷🇺 Советское"], ["cartoons","🐭 Мультфильмы"], ["horror","👻 Ужасы"], ["comedy","😂 Комедии"],
   ["scifi","🚀 Фантастика"], ["noir","🕵️ Нуар"], ["crime","🔎 Детективы"], ["western","🤠 Вестерны"], ["drama","🎭 Драмы"],
   ["war","🎖 Военные"], ["silent","🎩 Немое кино"]];
@@ -852,6 +860,7 @@ function Catalog(container, onPick) {
       <button class="btn linkbtn">Открыть</button>
     </div>
     <div class="chips genres">${GENRES.map(([k,v]) => `<span class="chip${k===""?" on":""}" data-g="${k}">${v}</span>`).join("")}</div>
+    <div class="chips rtchips" style="display:none">${RUTUBE_PICKS.map(q => `<span class="chip" data-q="${esc(q)}">${esc(q)}</span>`).join("")}</div>
     <div class="info"></div>
     <div class="grid"></div>
     <button class="btn ghost more" style="display:none">Показать ещё</button>`;
@@ -865,6 +874,7 @@ function Catalog(container, onPick) {
     $c(".search").style.display = link || src === "mine" ? "none" : "";
     $c(".linkrow").style.display = link ? "" : "none";
     $c(".genres").style.display = $c(".sort").style.display = archive ? "" : "none";
+    $c(".rtchips").style.display = src === "rutube" ? "" : "none";
     $c(".q").placeholder = yt ? "Поиск фильма на YouTube: Брат, комедия 2024…"
       : src === "rutube" ? "Поиск на Rutube: Гайдай, Ирония судьбы, Рязанов…" : "Поиск: Дракула, Чаплин, Хичкок, нуар…";
     if (link) {
@@ -886,6 +896,10 @@ function Catalog(container, onPick) {
     container.querySelectorAll(".genres .chip").forEach(x => x.classList.remove("on"));
     c.classList.add("on"); st.genre = c.dataset.g; load(true); }));
   more.addEventListener("click", () => { st.page++; load(false); });
+  container.querySelectorAll(".rtchips .chip").forEach(c => c.addEventListener("click", () => {
+    container.querySelectorAll(".rtchips .chip").forEach(x => x.classList.toggle("on", x === c));
+    $c(".q").value = st.q = c.dataset.q; load(true);
+  }));
 
   async function openLink() {
     const url = $c(".link").value.trim();
@@ -1183,6 +1197,7 @@ async function renderRoom(roomId) {
         <h3>Чат</h3>
         <div class="alone" id="alone" hidden>👀 Вы пока один в комнате — позовите друзей:
           <button class="btn small" id="aloneCopy">🔗 Скопировать ссылку</button></div>
+        <div class="pinned" id="pinned" hidden title="Показать сообщение"></div>
         <div class="msgs" id="msgs"></div>
         <div class="typing" id="typing"></div>
         <div class="replybar" id="replyBar" hidden></div>
@@ -1263,7 +1278,7 @@ async function renderRoom(roomId) {
     el.innerHTML = `${avatar(m.name)}<div class="bubble"><div class="who" style="color:hsl(${hue(m.name)} 80% 70%)">${esc(m.name)}</div>` +
       (m.reply ? `<div class="quote" data-to="${esc(m.reply.id)}" title="Показать сообщение"><b>${esc(m.reply.name)}:</b> ${esc(m.reply.text)}</div>` : "") +
       `${richText(m.text)}<span class="time">${fmtTime(m.ts)}</span><div class="mreacts"></div></div>` +
-      (m.id ? `<div class="mact"><button data-a="reply" title="Ответить">↩</button>${MSG_REACTS.map(e =>
+      (m.id ? `<div class="mact"><button data-a="reply" title="Ответить">↩</button><button data-a="pin" title="Закрепить над чатом">📌</button>${MSG_REACTS.map(e =>
         `<button data-a="react" data-e="${e}" title="Реакция">${e}</button>`).join("")}</div>` : "");
     if (m.id) { el.dataset.id = m.id; msgById.set(m.id, { el, m }); renderMsgReacts(m.id, m.reactions); }
     // сообщение из одних эмодзи — крупно
@@ -1306,6 +1321,7 @@ async function renderRoom(roomId) {
     const id = row.dataset.id, a = e.target.closest(".mact button"), chip = e.target.closest(".mreacts button");
     const quote = e.target.closest(".quote");
     if (a?.dataset.a === "reply") return setReply(msgById.get(id).m);
+    if (a?.dataset.a === "pin") { row.classList.remove("sel"); return send({ type: "pin", id }); }
     if (a?.dataset.a === "react" || chip) { row.classList.remove("sel"); return send({ type: "msgreact", id, emoji: (a || chip).dataset.e }); }
     if (quote) {
       const to = msgById.get(quote.dataset.to)?.el;
@@ -1318,6 +1334,20 @@ async function renderRoom(roomId) {
       row.classList.toggle("sel");
     }
   });
+
+  // 📌 закреплённое сообщение над чатом
+  let pinned = null;
+  function renderPinned() {
+    const box = $("#pinned");
+    box.hidden = !pinned;
+    if (!pinned) return;
+    box.innerHTML = `📌 <span><b>${esc(pinned.name)}:</b> ${esc(pinned.text)}</span><button title="Открепить" aria-label="Открепить">✕</button>`;
+  }
+  $("#pinned").onclick = e => {
+    if (e.target.closest("button")) return send({ type: "pin", id: "" });
+    const to = pinned && msgById.get(pinned.id)?.el;
+    if (to) { to.scrollIntoView({ block: "center", behavior: "smooth" }); to.classList.add("flash"); setTimeout(() => to.classList.remove("flash"), 1300); }
+  };
 
   // ссылки открываются в новой вкладке, таймкоды — кнопки перемотки
   function richText(text) {
@@ -2419,6 +2449,7 @@ async function renderRoom(roomId) {
     }
     else if (m.type === "extras") {
       proposals = m.proposals || []; roomHistory = m.history || [];
+      pinned = m.pinned || null; renderPinned();
       renderProps();
       if ($("#settingsModal").classList.contains("open")) renderSettings();
     }
@@ -2457,7 +2488,7 @@ async function renderRoom(roomId) {
     else if (m.type === "typing") {
       if (m.client !== CLIENT && m.name !== name) { typers.set(m.name, Date.now() + 4000); renderTyping(); }
     }
-    else if (m.type === "you") { amAdmin = m.admin; renderUsers(); $("#gearBtn").title = amAdmin ? "Настройки (вы администратор 👑)" : "Настройки"; }
+    else if (m.type === "you") { amAdmin = m.admin; roomEl.classList.toggle("isadmin", amAdmin); renderUsers(); $("#gearBtn").title = amAdmin ? "Настройки (вы администратор 👑)" : "Настройки"; }
     else if (m.type === "chat") addChat(m);
     else if (m.type === "system") addSys(m.text);
     else if (m.type === "react") { floatReaction(m.emoji, m.name); reactSound(m.emoji); }

@@ -415,6 +415,7 @@ class Room:
         self.break_until = None  # «перерыв на 5 минут»: до какого времени
         self.schedule = None     # сеанс по расписанию: когда начинаем
         self.title = ""          # название комнаты, например «Пятничное кино»
+        self.pinned = None       # 📌 закреплённое сообщение: {"id", "name", "text"}
         self.banned = {}         # кого выгнали: client_id или «n:имя» -> до какого времени
         self.session = None      # для «итогов вечера»
         self.admin_key = None   # секрет создателя комнаты
@@ -464,7 +465,7 @@ class Room:
         return cid in self.banned or "n:" + name in self.banned
 
     def extras(self):
-        return {"type": "extras", "proposals": self.proposals, "history": self.history}
+        return {"type": "extras", "proposals": self.proposals, "history": self.history, "pinned": self.pinned}
 
     def state(self):
         return {
@@ -784,6 +785,16 @@ def room_action(room, body):
                 room.proposals = [x for x in room.proposals if x is not p]
             else:
                 return
+            room.broadcast(room.extras())
+            return
+        elif t == "pin":
+            # 📌 закрепить сообщение над чатом (или открепить, если id пустой)
+            if not admin:
+                raise Forbidden("Закреплять сообщения может только администратор")
+            msg = next((m for m in room.chat if body.get("id") and m.get("id") == body.get("id")), None)
+            room.pinned = {"id": msg["id"], "name": msg["name"], "text": msg["text"][:300]} if msg else None
+            if msg:
+                room.broadcast({"type": "system", "text": f"📌 {name} закрепил(а) сообщение"})
             room.broadcast(room.extras())
             return
         elif t == "title":
