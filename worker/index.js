@@ -623,7 +623,8 @@ export class Room extends DurableObject {
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       Object.assign(this, { movie: null, playing: false, position: 0, chat: [], adminKey: null, everyone: true,
-                            presence: {}, proposals: [], history: [], breakUntil: null });
+                            presence: {}, proposals: [], history: [], breakUntil: null, schedule: null,
+                            banned: {}, session: null, title: "" });
       return { ok: true };
     }
     return { error: "unknown action" };
@@ -737,6 +738,8 @@ export class Room extends DurableObject {
     const t = body.type;
     const name = String(body.name || "Гость").slice(0, 30);
     const admin = this.isAdmin(body.admin);
+    // выгнанный не может писать и управлять даже напрямую, мимо страницы
+    if (this.isBanned(String(body.client || ""), name)) throw new Forbidden("Вас удалили из этой комнаты");
     if (CONTROL_ACTIONS.has(t) && !this.everyone && !admin) {
       throw new Forbidden("Сейчас просмотром управляет только администратор комнаты");
     }

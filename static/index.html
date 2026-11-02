@@ -379,6 +379,12 @@
   .sumgrid b { display: block; font-size: 18px; color: var(--text); }
   .qchips { justify-content: center; flex-wrap: wrap; padding: 12px 0 0; overflow: visible; }
   .qr { display: flex; gap: 14px; align-items: center; margin-top: 10px; }
+  .share { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .howto { text-align: left; display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+  .howto div { display: flex; gap: 12px; align-items: flex-start; }
+  .howto b.n { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; }
+  .howto p { margin: 0; color: #cfcde0; font-size: 14px; }
+  .linklike { background: none; border: 0; color: #d9d7e6; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; margin-top: 14px; font-size: 14px; }
   .qr svg { width: 132px; height: 132px; flex: none; background: #fff; border-radius: 12px; padding: 6px; }
   .moments { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; text-align: left; max-height: 50vh; overflow-y: auto; }
   .moments button { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg2);
@@ -525,6 +531,20 @@
       <div class="chips qchips" id="schedQuick"></div>
     </div>
   </div>
+</div>
+
+<!-- Как это работает -->
+<div class="modal" id="howModal">
+  <div class="sheet narrow"><div class="namecard">
+    <div class="big">🍿</div><h2>Как это работает</h2>
+    <div class="howto">
+      <div><b class="n">1</b><p><b>Создайте комнату</b> — можно сразу с фильмом: нажмите на фильм и «Смотреть вместе». Адрес комнаты можно придумать самому.</p></div>
+      <div><b class="n">2</b><p><b>Позовите друзей</b> — «🔗 Пригласить» скопирует ссылку. В ⚙️ есть кнопки Telegram, WhatsApp, ВКонтакте и QR-код.</p></div>
+      <div><b class="n">3</b><p><b>Смотрите вместе</b> — пауза, перемотка и смена фильма у всех одновременно. Чат, реакции, отсчёт 3-2-1 и «Все готовы?» — в меню «⋯» под видео.</p></div>
+      <div><b class="n">4</b><p><b>Закрыли вкладку?</b> Сайт помнит комнату и место в фильме — на главной будет «Вернуться». Пробел — пауза у всех, ← → — 10 секунд.</p></div>
+    </div>
+    <button class="btn" style="width:100%;margin-top:18px" onclick="closeModal('howModal')">Понятно 👍</button>
+  </div></div>
 </div>
 
 <!-- Таймер сна -->
@@ -972,6 +992,7 @@ function renderHome() {
         <button class="btn" onclick="newRoom()">🍿 Создать комнату</button>
         <button class="btn ghost" id="luckyBtn"><span class="spin">🎲</span> Случайный фильм</button>
       </div>
+      <button class="linklike" onclick="openModal('howModal')">Как это работает?</button>
       <div class="feats"><span>⚡ Синхронный просмотр</span><span>💬 Чат и реакции</span><span>⏱ Отсчёт 3-2-1</span>
         <span>💡 Режим кинозала</span><span>📺 VK · Rutube · YouTube</span><span id="onlineNow" hidden></span></div>
     </section>
@@ -1484,12 +1505,13 @@ async function renderRoom(roomId) {
       <div class="sgroup"><h4>Пригласить друзей</h4>
         <div class="srow"><input class="sinput" readonly value="${esc(inviteUrl)}" onclick="this.select()">
           <button class="btn small" id="copy2">Копировать</button></div>
+        <div class="share">${shareLinks()}</div>
         <div class="qr"><div id="qrBox"></div><div class="muted" style="font-size:13px">Наведите камеру телефона на код — откроется эта комната</div></div>
       </div>
       <div class="sgroup"><h4>Горячие клавиши</h4>
         <div class="muted" style="font-size:13px;line-height:2"><span class="kbd">1</span>–<span class="kbd">8</span> реакции ·
           <span class="kbd">L</span> свет · <span class="kbd">F</span> полный экран · <span class="kbd">C</span> скрыть чат ·
-          <span class="kbd">M</span> звук чата · <span class="kbd">B</span> перерыв · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно ·
+          <span class="kbd">M</span> звук чата · <span class="kbd">B</span> перерыв · <span class="kbd">R</span> синхронизация · <span class="kbd">Enter</span> чат · <span class="kbd">Esc</span> закрыть окно ·
           <span class="kbd">Пробел</span> пауза у всех · <span class="kbd">←</span> <span class="kbd">→</span> 10 секунд · <span class="kbd">?</span> это окно</div>
       </div>`;
     $("#everyone").onchange = e => send({ type: "mode", everyone: e.target.checked });
@@ -1743,6 +1765,16 @@ async function renderRoom(roomId) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
+
+  // отправить приглашение в мессенджер одной кнопкой
+  function shareLinks() {
+    const what = lastState?.roomTitle || lastState?.movie?.title;
+    const text = "Заходи смотреть кино вместе 🍿" + (what ? ` — «${what}»` : "");
+    const u = encodeURIComponent(inviteUrl), tx = encodeURIComponent(text);
+    return [["Telegram", `https://t.me/share/url?url=${u}&text=${tx}`], ["WhatsApp", `https://wa.me/?text=${tx}%20${u}`],
+            ["ВКонтакте", `https://vk.com/share.php?url=${u}&title=${tx}`]]
+      .map(([n, href]) => `<a class="btn ghost small" href="${esc(href)}" target="_blank" rel="noopener">${n}</a>`).join("");
+  }
 
   // QR-код приглашения: библиотека грузится, только когда открыли настройки
   let qrLib;
@@ -2413,6 +2445,7 @@ async function renderRoom(roomId) {
     else if (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "д") toggleLights();
     else if (e.key.toLowerCase() === "m" || e.key.toLowerCase() === "ь") setSound(!soundOn);
     else if (e.key.toLowerCase() === "b" || e.key.toLowerCase() === "и") $("#breakBtn").click();
+    else if (e.key.toLowerCase() === "r" || e.key.toLowerCase() === "к") $("#syncBtn").click();
     else if (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "а") setFs(!isFs());
     else if ((e.key.toLowerCase() === "c" || e.key.toLowerCase() === "с") && isFs()) toggleChat();
     else if (e.key === "Enter") {

@@ -665,6 +665,11 @@ def room_action(room, body):
     t = body.get("type")
     name = str(body.get("name", "Гость"))[:30]
     admin = room.is_admin(body.get("admin"))
+    # выгнанный не может писать и управлять даже напрямую, мимо страницы
+    with room.lock:
+        banned = room.is_banned(str(body.get("client", "")), name)
+    if banned:
+        raise Forbidden("Вас удалили из этой комнаты")
     if t in CONTROL_ACTIONS and not room.everyone and not admin:
         raise Forbidden("Сейчас просмотром управляет только администратор комнаты")
     info = None
