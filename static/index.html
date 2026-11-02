@@ -380,6 +380,11 @@
   .qchips { justify-content: center; flex-wrap: wrap; padding: 12px 0 0; overflow: visible; }
   .qr { display: flex; gap: 14px; align-items: center; margin-top: 10px; }
   .share { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .sdot { font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .sdot.ok { color: var(--ok); } .sdot.catch { color: #fcd34d; }
+  .alone { margin: 10px 14px 0; padding: 10px 12px; border-radius: 14px; font-size: 13px; background: rgba(255,154,60,.1);
+    border: 1px dashed rgba(255,154,60,.4); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .alone[hidden] { display: none; }
   .howto { text-align: left; display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
   .howto div { display: flex; gap: 12px; align-items: flex-start; }
   .howto b.n { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; }
@@ -1117,7 +1122,7 @@ async function renderRoom(roomId) {
         </div>
         <div class="toolbar">
           <div class="now"><div class="title" id="nowTitle">Ждём фильм…</div>
-            <div class="meta"><span id="nowYear"></span><span id="lockPill"></span></div></div>
+            <div class="meta"><span id="nowYear"></span><span id="syncDot" class="sdot"></span><span id="lockPill"></span></div></div>
           <div class="reactbar" id="reactbar"></div>
           <div class="tools">
             <button class="btn ghost small" id="syncBtn" title="Синхронизироваться с администратором">🔄 <span>Синхр.</span></button>
@@ -1149,6 +1154,8 @@ async function renderRoom(roomId) {
           <h3>🗳 Предложения <span class="count" id="pcount">0</span></h3>
           <div class="props" id="props"></div></div>
         <h3>Чат</h3>
+        <div class="alone" id="alone" hidden>👀 Вы пока один в комнате — позовите друзей:
+          <button class="btn small" id="aloneCopy">🔗 Скопировать ссылку</button></div>
         <div class="msgs" id="msgs"></div>
         <div class="typing" id="typing"></div>
         <div class="replybar" id="replyBar" hidden></div>
@@ -1443,6 +1450,7 @@ async function renderRoom(roomId) {
     renderProps();
     if (ready) renderReady();
     $("#ucount").textContent = users.length;
+    $("#alone").hidden = users.length !== 1;
     const locked = lastState?.everyone === false;
     $("#lockPill").innerHTML = locked ? `<span class="pill">🔒 Управляет 👑 ${esc(admin || "админ")}</span>` : "";
     if ($("#settingsModal").classList.contains("open")) renderSettings();
@@ -2042,11 +2050,13 @@ async function renderRoom(roomId) {
     });
     if (movie.subs?.length) toast("Есть субтитры — включите их в меню плеера (CC)");
     let remoteSeek = false, retries = 0, blockedAt = 0;
-    v.addEventListener("play", () => emit("play"));
+    // сообщаем только о том, что расходится с комнатой: запуск по команде сервера мог
+    // закончиться уже после «applying» (видео долго грузилось) — второй «пуск» не нужен
+    v.addEventListener("play", () => { if (!lastState?.playing) emit("play"); });
     v.addEventListener("ended", movieEnded);
     v.addEventListener("pause", () => setTimeout(() => {
       // паузу, которую поставил сам браузер из-за запрета автозапуска, не рассылаем
-      if (!v.ended && Date.now() - blockedAt > 2000) emit("pause");
+      if (!v.ended && Date.now() - blockedAt > 2000 && lastState?.playing) emit("pause");
     }, 50));
     v.addEventListener("seeked", () => {
       if (remoteSeek) { remoteSeek = false; return; }  // перемотка от сервера — не пересылаем
@@ -2403,9 +2413,21 @@ async function renderRoom(roomId) {
       const t = saneTime();
       if (t != null && t > 60) watchPos.set(lastState.movie.id, t);
     }
-    if (lastState?.movie && player && !applying) checkLag();
+    if (lastState?.movie && player && !applying) { checkLag(); showSync(); }
     if (lastState?.movie && player && !applying && !player.busy?.()) applyState({ ...lastState, position: expected() });
   }, 5000);
+
+  $("#aloneCopy").onclick = copyInvite;
+
+  // ● синхронно / догоняем: видно, что фильм у вас совпадает с комнатой
+  function showSync() {
+    const el = $("#syncDot"), t = player?.time?.();
+    if (!lastState?.movie || !Number.isFinite(t)) { el.textContent = ""; return; }
+    const ok = !lastState.playing || Math.abs(t - expected()) < 1.5;
+    el.className = "sdot " + (ok ? "ok" : "catch");
+    el.textContent = ok ? "● синхронно" : "● догоняем…";
+    el.title = ok ? "Фильм у вас идёт вровень с комнатой" : "Видео подгружается и догоняет остальных";
+  }
 
   // отставание: сообщаем комнате, только когда начали или перестали отставать (две проверки подряд)
   let lagSent = 0, stuckTicks = 0;
