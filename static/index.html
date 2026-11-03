@@ -2103,6 +2103,7 @@ async function renderRoom(roomId) {
 
   // ✅ «Все готовы?»: каждый жмёт «Я готов»; когда готовы все, спросивший запускает отсчёт
   let ready = null;  // { mine, names: Set, until }
+  let myAsk = null;  // метка своего последнего «Все готовы?»
   function renderReady() {
     const ov = $("#readyOv");
     if (!ready || Date.now() > ready.until) { ready = null; ov.classList.remove("show"); return; }
@@ -2116,7 +2117,9 @@ async function renderRoom(roomId) {
   $("#readyBtn").onclick = async () => {
     if (!player || !lastState?.movie) return toast("Сначала выберите фильм 🎬");
     if (!canControl()) return toast("Сейчас просмотром управляет только администратор 👑");
-    await send({ type: "readycheck" });
+    // разовая метка вопроса: по ней узнаём свой «Все готовы?», не показывая другим id клиента
+    myAsk = Math.random().toString(36).slice(2, 10);
+    await send({ type: "readycheck", ask: myAsk });
     send({ type: "ready" });
   };
   $("#readyYes").onclick = () => send({ type: "ready" });
@@ -2480,13 +2483,13 @@ async function renderRoom(roomId) {
     }
     else if (m.type === "msgreact") renderMsgReacts(m.id, m.reactions);
     else if (m.type === "readycheck") {
-      ready = { mine: m.client === CLIENT, names: new Set(), until: Date.now() + 90000 };
+      ready = { mine: Boolean(myAsk) && m.ask === myAsk, names: new Set(), until: Date.now() + 90000 };
       if (!ready.mine) { ping("mention"); notify("✅ Все готовы?", `${m.name} спрашивает, готовы ли вы смотреть`); }
       renderReady();
     }
     else if (m.type === "ready") { if (ready) { ready.names.add(m.name); renderReady(); } }
     else if (m.type === "typing") {
-      if (m.client !== CLIENT && m.name !== name) { typers.set(m.name, Date.now() + 4000); renderTyping(); }
+      if (m.name !== name) { typers.set(m.name, Date.now() + 4000); renderTyping(); }
     }
     else if (m.type === "you") { amAdmin = m.admin; roomEl.classList.toggle("isadmin", amAdmin); renderUsers(); $("#gearBtn").title = amAdmin ? "Настройки (вы администратор 👑)" : "Настройки"; }
     else if (m.type === "chat") addChat(m);

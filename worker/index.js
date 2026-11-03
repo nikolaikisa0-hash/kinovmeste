@@ -339,6 +339,7 @@ function newRoomId() {
 const enc = new TextEncoder();
 
 class Forbidden extends Error {}
+class TooFast extends Forbidden {}
 
 const CONTROL_ACTIONS = new Set(["load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck", "schedule"]);
 const MOVIE_ID = /^[\w.:-]{1,160}$/;
@@ -347,6 +348,10 @@ const AVATAR = /^\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\u200d\ufe0f\p{Ext
 const LEAVE_GRACE = 20_000;   // столько ждём переподключения, прежде чем написать «вышел»
 const PING_TIMEOUT = 150_000; // клиент шлёт ping раз в 25 с; дольше тишины — соединение мёртвое
 const WS_OPEN = 1;
+// защита от флуда: запас действий и скорость его восстановления на одного зрителя
+const LIMIT_ALL = { burst: 40, perSec: 4 };
+const LIMIT_CHAT = { burst: 8, perSec: 1 };  // то, что видят все: чат, реакции, предложения
+const CHATTY_ACTIONS = new Set(["chat", "react", "msgreact", "propose", "vote", "rename", "pin", "title"]);
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -555,6 +560,7 @@ export class Room extends DurableObject {
   // выход: «вышел» напишем позже, если человек не вернётся за LEAVE_GRACE
   async leave(cid, name, wasAdmin) {
     if (this.live().some(c => c.cid === cid)) return;  // уже переподключился
+    this.buckets?.delete(cid);
     if (this.presence[cid]?.leftAt != null) return;
     const now = Date.now();
     // управлять может только админ, а он пропал со связи — пауза, чтобы фильм не ушёл без него
@@ -675,7 +681,7 @@ export class Room extends DurableObject {
         const res = await this.action(body);
         return json(res || { ok: true });
       } catch (e) {
-        if (e instanceof Forbidden) return json({ error: e.message, forbidden: true }, 403);
+        if (e instanceof Forbidden) return json({ error: e.message, forbidden: true }, e instanceof TooFast ? 429 : 403);
         return json({ error: String(e.message || e) }, 502);
       }
     }
@@ -735,12 +741,32 @@ export class Room extends DurableObject {
     } });
   }
 
+  // слишком частые действия одного зрителя: true — пропустить, false — отклонить
+  allow(cid, t) {
+    const now = Date.now();
+    const b = (this.buckets ??= new Map()).get(cid) ?? { all: LIMIT_ALL.burst, chat: LIMIT_CHAT.burst, at: now };
+    const dt = (now - b.at) / 1000;
+    b.all = Math.min(LIMIT_ALL.burst, b.all + dt * LIMIT_ALL.perSec);
+    b.chat = Math.min(LIMIT_CHAT.burst, b.chat + dt * LIMIT_CHAT.perSec);
+    b.at = now;
+    this.buckets.set(cid, b);
+    if (b.all < 1 || (CHATTY_ACTIONS.has(t) && b.chat < 1)) return false;
+    b.all -= 1;
+    if (CHATTY_ACTIONS.has(t)) b.chat -= 1;
+    return true;
+  }
+
   async action(body) {
     const t = body.type;
-    const name = String(body.name || "Гость").slice(0, 30);
+    // имя берём у соединения этого клиента, а не из запроса — иначе можно писать от чужого имени
+    const cid = String(body.client || "");
+    const me = cid && this.live().find(c => c.cid === cid);
+    if (!me) throw new Forbidden("Нет связи с комнатой — подождите пару секунд или обновите страницу");
+    const name = me.name;
+    if (!this.allow(cid, t)) throw new TooFast("Слишком часто — подождите немного");
     const admin = this.isAdmin(body.admin);
     // выгнанный не может писать и управлять даже напрямую, мимо страницы
-    if (this.isBanned(String(body.client || ""), name)) throw new Forbidden("Вас удалили из этой комнаты");
+    if (this.isBanned(cid, name)) throw new Forbidden("Вас удалили из этой комнаты");
     if (CONTROL_ACTIONS.has(t) && !this.everyone && !admin) {
       throw new Forbidden("Сейчас просмотром управляет только администратор комнаты");
     }
@@ -807,11 +833,12 @@ export class Room extends DurableObject {
       this.breakUntil = Date.now() + min * 60_000;
       sysMsg = `☕ ${name} объявил(а) перерыв на ${min} мин`;
     } else if (t === "typing") {
-      this.broadcast({ type: "typing", name, client: body.client });
+      this.broadcast({ type: "typing", name });
       return;
     } else if (t === "readycheck" || t === "ready") {
       // «Все готовы?»: сервер только передаёт сигнал, запуск делает тот, кто спросил
-      this.broadcast({ type: t, name, client: body.client });
+      // id клиента не рассылаем: по нему можно было бы действовать от чужого имени
+      this.broadcast({ type: t, name, ask: String(body.ask || "").slice(0, 16) });
       return;
     } else if (t === "lag") {
       // клиент сообщает, только когда начал или перестал отставать — это редкое событие

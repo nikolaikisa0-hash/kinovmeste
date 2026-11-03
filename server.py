@@ -408,6 +408,7 @@ class Room:
         self.empty_since = None  # когда ушёл последний зритель
         self.active_since = None  # с какого момента в комнате кто-то есть (для «комнато-часов»)
         self.clients = {}  # client_id -> {"name", "queue", "admin"}
+        self.buckets = {}  # client_id -> запас действий (защита от флуда)
         self.presence = {}  # client_id -> {"name", "left_at"} — чтобы переподключение не писало «вышел/зашёл»
         self.chat = []
         self.proposals = []  # фильмы, предложенные комнате: {"id", "title", "by", "votes": [имена]}
@@ -651,8 +652,33 @@ class Forbidden(Exception):
     pass
 
 
+class TooFast(Forbidden):
+    pass
+
+
 CONTROL_ACTIONS = {"load", "play", "pause", "seek", "countdown", "sync", "break", "readycheck", "schedule"}
 MSG_REACTS = {"👍", "❤️", "😂", "😮", "😢", "🔥"}
+# защита от флуда: запас действий и скорость его восстановления на одного зрителя
+LIMIT_ALL = (40, 4)   # (запас, в секунду)
+LIMIT_CHAT = (8, 1)   # то, что видят все: чат, реакции, предложения
+CHATTY_ACTIONS = {"chat", "react", "msgreact", "propose", "vote", "rename", "pin", "title"}
+
+
+def allow_action(room, cid, t):
+    """Слишком частые действия одного зрителя: True — пропустить, False — отклонить."""
+    now = time.time()
+    b = room.buckets.get(cid) or {"all": LIMIT_ALL[0], "chat": LIMIT_CHAT[0], "at": now}
+    dt = now - b["at"]
+    b["all"] = min(LIMIT_ALL[0], b["all"] + dt * LIMIT_ALL[1])
+    b["chat"] = min(LIMIT_CHAT[0], b["chat"] + dt * LIMIT_CHAT[1])
+    b["at"] = now
+    room.buckets[cid] = b
+    if b["all"] < 1 or (t in CHATTY_ACTIONS and b["chat"] < 1):
+        return False
+    b["all"] -= 1
+    if t in CHATTY_ACTIONS:
+        b["chat"] -= 1
+    return True
 
 
 def valid_avatar(av):
@@ -664,11 +690,19 @@ MOVIE_ID = re.compile(r"^[\w.:-]{1,160}$")
 
 def room_action(room, body):
     t = body.get("type")
-    name = str(body.get("name", "Гость"))[:30]
+    # имя берём у соединения этого клиента, а не из запроса — иначе можно писать от чужого имени
+    cid = str(body.get("client", ""))
+    with room.lock:
+        me = room.clients.get(cid)
+        if not me:
+            raise Forbidden("Нет связи с комнатой — подождите пару секунд или обновите страницу")
+        name = me["name"]
+        if not allow_action(room, cid, t):
+            raise TooFast("Слишком часто — подождите немного")
     admin = room.is_admin(body.get("admin"))
     # выгнанный не может писать и управлять даже напрямую, мимо страницы
     with room.lock:
-        banned = room.is_banned(str(body.get("client", "")), name)
+        banned = room.is_banned(cid, name)
     if banned:
         raise Forbidden("Вас удалили из этой комнаты")
     if t in CONTROL_ACTIONS and not room.everyone and not admin:
@@ -750,11 +784,12 @@ def room_action(room, body):
             room.break_until = time.time() + minutes * 60
             sys_msg = f"☕ {name} объявил(а) перерыв на {minutes} мин"
         elif t == "typing":
-            room.broadcast({"type": "typing", "name": name, "client": body.get("client")})
+            room.broadcast({"type": "typing", "name": name})
             return
         elif t in ("readycheck", "ready"):
             # «Все готовы?»: сервер только передаёт сигнал, запуск делает тот, кто спросил
-            room.broadcast({"type": t, "name": name, "client": body.get("client")})
+            # id клиента не рассылаем: по нему можно было бы действовать от чужого имени
+            room.broadcast({"type": t, "name": name, "ask": str(body.get("ask", ""))[:16]})
             return
         elif t == "lag":
             # клиент сообщает, только когда начал или перестал отставать — это редкое событие
@@ -1115,7 +1150,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = room_action(get_room(p.split("/")[3]), body)
             except Forbidden as e:
-                return self.send_json({"error": str(e), "forbidden": True}, 403)
+                return self.send_json({"error": str(e), "forbidden": True}, 429 if isinstance(e, TooFast) else 403)
             except Exception as e:  # noqa: BLE001
                 return self.send_json({"error": str(e)}, 502)
             return self.send_json(res or {"ok": True})
@@ -1175,6 +1210,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not me or me["queue"] is not q:
                     return  # клиент уже переподключился новым соединением
                 del room.clients[cid]
+                room.buckets.pop(cid, None)
                 # «вышел» напишем позже, если человек не вернётся за LEAVE_GRACE
                 now = time.time()
                 # управлять может только админ, а он пропал со связи — пауза, чтобы фильм не ушёл без него
